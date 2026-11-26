@@ -1,7 +1,7 @@
 WITH historical_stats AS (
     SELECT area_id, season, day_of_week, hour_of_day,
-           AVG(trip_count) FILTER (WHERE rain_mm = 0) AS dry_avg,
-           COUNT(*) FILTER (WHERE rain_mm = 0) AS dry_n,
+           AVG(trip_count) FILTER (WHERE rain_mm >= 0 AND rain_mm < $1) AS dry_avg,
+           COUNT(*) FILTER (WHERE rain_mm >= 0 AND rain_mm < $1) AS dry_n,
            AVG(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_avg,
            COUNT(*) FILTER (WHERE rain_mm >= $1) AS rain_n,
            STDDEV_SAMP(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_stddev

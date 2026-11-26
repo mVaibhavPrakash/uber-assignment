@@ -2,6 +2,10 @@
 
 A weather-informed mobility dashboard for 20 selected NYC taxi zones. It shows one action to review driver availability, or explains why no intervention is recommended. Completed trips measure activity, not unmet demand or driver supply.
 
+Recommendations rank zones with complete evidence for the planning window. Incomplete zones do not block an otherwise eligible action: the UI shows assessed/total coverage and warns that excluded zones may have higher impact. With partial coverage, no qualifying result means no assessed zone reaches the threshold, not that all monitored zones are clear.
+
+Rain below the configured threshold (default 0.5 mm/hour), including light rain, uses the historical below-threshold comparison and contributes zero modeled extra trips. At or above the threshold, the engine applies the rainy-versus-below-threshold comparison. The UI calls the comparison "Typical dry-weather trips" and explains the light-rain inclusion in a tooltip. Restart/rebuild the API after this change to refresh its historical statistics; reseeding is unnecessary.
+
 ## Run
 
 Copy `.env.example` to `.env` before starting. The example includes credentials for the local assignment database and uses the Compose host `db`. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. The `.env` file is ignored by Git.
@@ -33,6 +37,36 @@ npm run dev
 ```
 
 The frontend proxies requests to port 8080. It refreshes every 60 seconds and suppresses expired recommendations and results from failed refreshes.
+
+## Debug the backend with PostgreSQL in Docker
+
+Keep PostgreSQL in Docker and run Go directly in your terminal or debugger. The database is exposed only on `127.0.0.1:15432`, leaving locally installed PostgreSQL on port 5432 separate. It uses the same assignment database volume and credentials from `.env`.
+
+From the repository root, start the database and stop the containerized API to free port 8080:
+
+```sh
+docker compose up -d db
+docker compose stop api
+```
+
+For an already seeded database, do not run setup or seed again. For a first-time empty database, use the setup command in the Run section before starting the local backend; setup resets the dedicated assignment database.
+
+In PowerShell, read the connection URL from `.env` and change only the host and port for this terminal:
+
+```powershell
+$databaseSetting = Get-Content .env | Where-Object { $_.StartsWith('DATABASE_URL=') }
+$env:DATABASE_URL = $databaseSetting.Substring(13).Replace('@db:5432/', '@127.0.0.1:15432/')
+go run ./cmd/server
+```
+
+Alternatively, in Git Bash:
+
+```sh
+export DATABASE_URL="$(sed -n 's/^DATABASE_URL=//p' .env | tr -d '\r' | sed 's/@db:5432\//@127.0.0.1:15432\//')"
+go run ./cmd/server
+```
+
+The API runs at http://localhost:8080. The normal local frontend (`npm run dev`) can use it. If Delve is installed, replace `go run ./cmd/server` with `dlv debug ./cmd/server` to set breakpoints. This approach leaves `.env` configured for Docker and does not require credentials for your separately installed PostgreSQL server.
 
 ## Try a rainy recommendation in the UI
 
@@ -67,7 +101,7 @@ Expected: **review driver availability in Astoria**, **450 additional trips**, *
 Verify the same calculation without the UI:
 
 ```sh
-go test ./tests -run 'TestRecommendationMessages/action$' -v
+go test ./tests -run TestRecommendationRanksAssessedZones -v
 ```
 
 Stop the two sample processes with Ctrl+C when finished. The normal application remains available at http://localhost:3000. The harness adds no scoring rules and never reads or changes the database.
@@ -85,12 +119,13 @@ See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#archit
 | Deliverable | Where to find it |
 |---|---|
 | Architecture, endpoints, schema explanation and important SQL | [DESIGN_AND_SCALABILITY.md](DESIGN_AND_SCALABILITY.md) |
+| Scheduler and recommendation flow with timing examples | [Scheduler and recommendation architecture](docs/SCHEDULER_AND_RECOMMENDATIONS.md) |
 | Assumptions, alternatives, trade-offs and known limitations | [TRADEOFFS.md](TRADEOFFS.md) |
 | AI tools, accepted/rejected suggestions, validation, risks and technical challenges | [MY_REASONING.md](MY_REASONING.md#ai-use-disclosure) |
 | Prepared public dataset and offline preparation boundary | [data/README.md](data/README.md) |
 | Executable schema and SQL | [migrations](database/migrations/), [historical aggregation](internal/repository/postgres/historical.sql) |
 | Dependencies and configuration | [go.mod](go.mod), [go.sum](go.sum), [frontend/package.json](frontend/package.json), [lockfile](frontend/package-lock.json), [.env.example](.env.example), [compose.yaml](compose.yaml) |
-| Three focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [external API failure](tests/weather_test.go) |
+| Four focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [external API failure](tests/weather_test.go) |
 | Working product demonstration | Screenshots below; the two Docker commands above run the application locally. |
 
 Repository publication/access verification remains a submission step; no remote URL is currently configured. A hosted deployment is optional and is not supplied here.
@@ -118,4 +153,4 @@ npm run build --prefix frontend
 
 Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include SQL verification. That test creates/removes its own temporary schema and skips without the variable. Docker setup was also verified from a clean copy with no local dependencies/build artifacts and a new database volume.
 
-The existing recommendation test also checks read-only cache behavior, summary/insight consistency, stale warnings, concurrent reads during refresh, version changes and expiry. These checks passed Go's race detector in a temporary Linux container. The suite still has three top-level tests.
+The suite contains exactly four tests: a qualifying recommendation with partial coverage, light rain without intervention, historical SQL comparisons, and retaining usable forecasts during an outage while rejecting expired forecasts. There are no nested scenario matrices or cache/serialization test suites.

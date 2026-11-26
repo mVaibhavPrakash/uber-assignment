@@ -1,21 +1,54 @@
-# Assumptions, trade-offs and limitations
+# Design tradeoffs and limitations
 
-| Choice or assumption | Reason and limitation |
-|---|---|
-| 20 manually selected zones with one representative coordinate each | Keeps the comparison manageable, but excludes the rest of NYC and cannot capture within-zone weather variation. |
-| Same season, weekday and local hour; equal weighting across years | Explainable comparison with reusable SQL. It assumes historical comparability, introduces season boundaries and does not adapt to recent trends. |
-| Fixed rain threshold and five observations per relevant class | Simple configurable eligibility. Neither the sample minimum nor the intervention threshold is statistically calibrated. Snow and trace rain are unsupported rather than treated as dry. |
-| Linear probability-weighted rainy–dry difference | Easy to explain. It treats precipitation probability as a qualifying-rain proxy and does not model rain intensity, interactions or intervention outcomes. |
-| Signed additional trips, ranked by absolute trip count rather than percentage | Prioritizes larger modeled activity changes and preserves decreases. It may favor busier zones; it does not account for available drivers, intervention cost or revenue. |
-| Complete evidence across every monitored zone/hour | Avoids naming a scope-wide winner when a zone cannot be assessed, but one unsupported zone can suppress an action. No automatic fallback relaxes the rule. |
-| Startup historical cache and one scheduler instance | Keeps request handling small and avoids repeated scans/provider calls. Multi-replica scheduling, distributed caches and automatic historical refresh are deferred. |
-| Read-only recommendation cache with API response preparation | Removes deep copies of hourly evidence on each read. Summary headers and stale-warning lists are copied only when needed; internal readers must not mutate shared data. Atomic replacement protects concurrent publication, not arbitrary writes through shared pointers. |
-| PostgreSQL plus a small Go/React application | Meets the relational/SQL requirement with three tables and explicit behavior. Authentication, ML, maps and additional dashboards were omitted to keep focus on one decision. |
+The application estimates rain-related changes in completed trip activity for 20 selected NYC zones. Its output supports a review of driver availability; it does not measure waiting riders, available drivers or the number of drivers to move. The design favors an explainable comparison and a small runtime over a predictive model whose accuracy has not been established.
 
-Historical associations do not establish causation. Old observations may not reflect current travel patterns, holidays, pricing or disruptions. Precipitation probability is a proxy for qualifying rain, and weather varies within zones. Counts and standard deviation describe historical evidence, not calibrated confidence. Only selected zones are monitored; the application cannot establish a driver shortage. The dashboard keeps controller-facing warnings concise and omits sample counts, historical-statistics tables and calculation details.
+## Data and scoring decisions
 
-Backend JSON responses round trip quantities to whole integers; missing values remain null. Scoring, ranking and threshold comparisons retain full precision before serialization. Percentages and weather measurements retain decimals. Hourly values and window totals are rounded independently, so displayed hourly figures can differ slightly from a displayed total.
+| Decision | Reason | Accepted limitation |
+|---|---|---|
+| Use 20 manually selected zones with one representative coordinate each | Keeps the operational scope explicit and forecast requests manageable. | Other NYC zones and weather differences within a zone are not represented. |
+| Compare the same zone, season, weekday and local hour | Accounts for some calendar patterns with a reusable SQL aggregation. | Seasonal boundaries are abrupt; observations from different years receive equal weight and may not reflect recent behavior. |
+| Use a numeric rainfall threshold, default 0.5 mm/hour | Gives historical observations and forecast hours the same grouping rule. Dry conditions and lighter rain form the comparison group; rainfall at or above the threshold forms the rainy group. | Below-threshold rain has zero modeled additional effect. This is an assumption, not evidence that light rain has no physical effect. Snow remains excluded. |
+| Require five historical observations per relevant class | Prevents calculating estimates from missing or extremely sparse evidence. | Five is a configurable coverage heuristic, not a statistical significance or confidence threshold. |
+| Multiply the historical difference by precipitation probability | Produces a transparent calculation that can be traced to its inputs. | Any-precipitation probability is a proxy for qualifying rainfall. Intensity effects, interactions and uncertainty calibration are not modeled. |
+| Rank signed additional trip totals rather than percentage increases | Prioritizes the largest modeled activity increase while preserving negative hourly effects. | Busier zones may dominate. Driver supply, intervention cost and revenue are not included. |
+| Use a configurable intervention threshold, default 100 additional trips over two hours | Separates a modeled increase from an action worth reviewing. | The threshold is not calibrated against operational outcomes. |
 
-## Alternatives and history
+Exact-date comparisons were rejected because they provide few observations across years. Monthly groups can still have sparse rainy samples, while all-year comparisons mix seasons. Rolling windows, adaptive fallback and machine learning introduce additional choices that require validation. Fixed seasons were selected for explainability, not measured superiority. Alternative comparisons are detailed in [the architecture document](DESIGN_AND_SCALABILITY.md#recommendation-design-history-alternatives-and-final-decision).
 
-The fixed-season comparison was chosen for explainability over exact-date, monthly, rolling-window or machine-learning approaches; no measured superiority is claimed. The selection was the user's edited 20-zone list, not an automatically selected top-20 list. See [recommendation alternatives](DESIGN_AND_SCALABILITY.md#recommendation-design-history-alternatives-and-final-decision) and [AI decision history](MY_REASONING.md#earlier-discussions-and-decisions) for the original discussion and source-retrieval experiments.
+## Evidence coverage and user decisions
+
+A zone must have assessable evidence for every hour in its planning window before receiving a window total. Missing evidence remains unknown rather than becoming zero or a misleading partial estimate.
+
+Complete zones are ranked even when other zones cannot be assessed. This replaces the original all-zone rule, which could suppress an eligible action because evidence was missing elsewhere. The UI reports assessed/total coverage and warns that excluded zones may have higher impact. The recommendation is the highest eligible estimate among assessed zones, not a claim about all monitored zones.
+
+With partial coverage and no qualifying action, the UI states that no assessed zone reaches the threshold rather than declaring normal operations. If no zones are assessable, the result is insufficient evidence, or unavailable when forecast evidence is missing. Forecast freshness and complete provider-snapshot validation remain separate requirements.
+
+## Scheduling and storage decisions
+
+| Decision | Reason | Accepted limitation |
+|---|---|---|
+| Assess the next two complete future hours | Keeps forecast intervals aligned with full hourly historical observations. | The result does not cover the remainder of the current hour. At 10:53, the window is 11:00-13:00, not a remaining-time estimate. |
+| Aggregate historical evidence once at API startup | Keeps full-history scans out of scoring and HTTP requests. | Historical-data or grouping-configuration changes require restart. Embedded SQL changes also require rebuilding. |
+| Refresh weather every three hours, compute recommendations hourly, and check every 15 minutes or at the next hour boundary | Separates provider usage, decision validity and scheduling cadence. | Sequential execution means a slow weather job can delay recommendation computation. Replacement at expiry is not instantaneous. |
+| Retry temporary provider failures within a bounded request | Handles short failures without unbounded requests or waits. | After a failed fetch, the next scheduler weather attempt normally waits for the three-hour interval from the previous attempt. |
+| Retain stale weather within a maximum age | Allows continued operation through a provider outage without silently treating old data as fresh. | Defaults of three hours to stale and six hours maximum age are operational choices, not validated accuracy guarantees. Version, coverage and expiry checks can still make a result unavailable. |
+| Persist complete forecasts transactionally in PostgreSQL | Supports restart recovery and avoids publishing partial writes. | Only the latest complete snapshot is stored; this is not a forecast archive. |
+| Use one scheduler loop that owns its job state | Makes execution order explicit and removes unnecessary scheduler mutexes. | Each scheduler instance must have one Run invocation. Concurrent manual triggers or external state readers would require revisiting synchronization. |
+| Publish recommendations through an atomic pointer and treat nested evidence as read-only | Avoids deep-copying hourly evidence on every HTTP request. API response preparation copies only the headers or warnings it changes. | Immutability is a caller contract. Atomic replacement does not protect shared data from arbitrary mutation. |
+
+The application assumes one instance. Distributed scheduling, shared recommendation caches and automatic historical refresh are deferred. Actual concurrent access remains protected where HTTP readers share caches with background writers. The full execution flow is documented in [Scheduler and recommendation architecture](docs/SCHEDULER_AND_RECOMMENDATIONS.md).
+
+## Presentation and validation scope
+
+The controller view shows one primary action, coverage, supporting hourly evidence and concise warnings. It avoids presenting sample counts or historical variation as calibrated confidence. The label "Typical dry-weather trips" is retained for readability; its tooltip explains that the comparison includes light rain below the threshold.
+
+Trip quantities are rounded only when serialized to JSON. Scoring and ranking retain full precision, missing values remain null, and percentages and weather measurements retain decimals. Hourly estimates and window totals are rounded independently, so displayed values may not add up exactly.
+
+The retained suite has four tests: assessed-zone recommendation scoring, light rain without intervention, historical SQL comparisons, and provider outage with stale/expired forecast handling. Removing the larger case matrix and cache/concurrency checks reduces maintenance and explanation cost, but leaves less regression coverage for those behaviors.
+
+The separate rain demo uses explicitly fictional inputs and the actual scoring engine. It demonstrates calculation and presentation, not live forecast accuracy or the production refresh lifecycle. Authentication, supply-demand integration, additional weather models and outcome evaluation are outside the implemented scope.
+
+Historical associations do not establish causation. Holidays, events, pricing, road closures and changes in travel behavior can affect completed trips. No held-out accuracy, causal effect or intervention benefit is established by this implementation.
+
+The source experiments, rejected approaches and incremental changes leading to these decisions are recorded in [implementation reasoning and development history](MY_REASONING.md#earlier-discussions-and-decisions).

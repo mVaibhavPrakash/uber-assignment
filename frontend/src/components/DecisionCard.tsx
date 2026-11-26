@@ -21,10 +21,11 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
   const action = result.status === "action_required";
   const primary = action ? result.primary_recommendation : null;
   const normal = result.status === "no_intervention";
+  const partial = result.coverage.assessed < result.coverage.total;
   const title = primary
     ? `Review driver availability in ${formatAreaName(primary.area.name)}`
     : normal
-      ? "Continue normal operations"
+      ? partial ? "No assessed zone reaches the intervention threshold" : "Continue normal operations"
       : result.status === "insufficient_evidence"
         ? "Insufficient evidence to recommend an action"
         : "Recommendation unavailable";
@@ -54,6 +55,13 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
         </div>
       </div>
       <p className="decision-explanation">{explanation}</p>
+      {partial && (
+        <p className="notice" role="status">
+          {result.coverage.assessed} of {result.coverage.total} zones assessed. {result.coverage.total - result.coverage.assessed} zones could not be assessed
+          because forecast or historical evidence is incomplete or weather is unsupported.
+          {result.coverage.assessed > 0 && " A higher-impact zone may be among them. This decision covers assessed zones only."}
+        </p>
+      )}
       {result.freshness === "stale" && (
         <p className="notice" role="status">
           Supporting weather is stale. Check current conditions before acting.
@@ -67,7 +75,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
             <ComparisonBars evidence={primary} />
             <p className="muted">
               Highest eligible additional-trip estimate across{" "}
-              {result.coverage.total} monitored zones. Intervention threshold:{" "}
+              {result.coverage.assessed} assessed zones out of {result.coverage.total} monitored. Intervention threshold:{" "}
               {formatNumber(result.threshold_additional_trips)} trips.
             </p>
           </div>

@@ -25,7 +25,6 @@ var (
 	ErrForecastExpired    = errors.New("forecast expired")
 	ErrForecastCoverage   = errors.New("forecast does not cover the current recommendation window")
 	ErrWeatherRefreshBusy = errors.New("forecast refresh already running")
-	ErrSchedulerBusy      = errors.New("scheduler tick already running")
 )
 
 // HTTPError defines the status, safe code and message returned to API callers.

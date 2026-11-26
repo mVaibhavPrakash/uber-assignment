@@ -19,8 +19,9 @@ type HistoricalQuery struct{ MinRainfallMM float64 }
 // Nil means unknown; a pointer to zero is an observed zero mean.
 type HourlyStats struct {
 	AreaID, Season, DayOfWeek, HourOfDay int
-	DryMean, RainMean                    *float64
-	DrySamples, RainSamples              int64
+	// Dry fields retain their API names but represent all rain below the configured threshold.
+	DryMean, RainMean       *float64
+	DrySamples, RainSamples int64
 	// Historical comparisons are signed. RainStdDev is sample dispersion of
 	// rainy trip counts, not uncertainty of the mean or a causal estimate.
 	AbsoluteUplift, PercentageUplift, RainStdDev *float64

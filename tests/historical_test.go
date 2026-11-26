@@ -58,7 +58,8 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
  (7,'2023-01-07 15:00Z','2023-01-07',6,1,10,1500,1,0),
  (7,'2023-02-04 15:00Z','2023-02-04',6,1,10,1900,0.5,0),
  (7,'2022-12-17 15:00Z','2022-12-17',6,1,10,9000,1,1),
- (7,'2022-12-24 15:00Z','2022-12-24',6,1,10,8000,0.1,0);`)
+ (7,'2022-12-24 15:00Z','2022-12-24',6,1,10,1200,0.1,0),
+ (7,'2022-12-31 15:00Z','2022-12-31',6,1,10,1200,0.4,0);`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +71,8 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
 		t.Fatalf("expected one comparable group, got %d", len(rows))
 	}
 	stats := rows[0]
-	if stats.DrySamples != 2 || stats.RainSamples != 2 {
-		t.Fatalf("snow or trace rain entered comparison: %+v", stats)
+	if stats.DrySamples != 4 || stats.RainSamples != 2 {
+		t.Fatalf("baseline must include light rain; qualifying rain stays separate and snow excluded: %+v", stats)
 	}
 	if stats.DryMean == nil || *stats.DryMean != 1200 || stats.RainMean == nil || *stats.RainMean != 1700 || stats.AbsoluteUplift == nil || *stats.AbsoluteUplift != 500 {
 		t.Fatalf("incorrect completed-trip comparison: %+v", stats)

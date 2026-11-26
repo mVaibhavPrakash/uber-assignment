@@ -26,14 +26,14 @@ export function formatAreaName(name: string) {
 }
 
 // Explain the backend's assessment without reimplementing eligibility.
-export function describeHourAssessment(hour: HourEvidence) {
+export function describeHourAssessment(hour: HourEvidence, rainThreshold: number) {
   switch (hour.reason) {
     case 'missing_forecast': case 'invalid_forecast': return 'Forecast unavailable';
     case 'snow_not_supported': return 'Unsupported weather: snow';
-    case 'trace_rain_not_supported': return 'Unsupported weather: light rain';
     case 'missing_history': case 'insufficient_dry_history': case 'insufficient_rain_history':
       return 'Insufficient historical evidence';
   }
   if (!hour.forecast) return 'Forecast unavailable';
+  if (hour.forecast.rain_mm < rainThreshold) return 'Below rain threshold';
   return 'Estimate available';
 }

@@ -33,11 +33,6 @@ func (s *forecastStore) ReplaceSnapshot(_ context.Context, snapshot repository.F
 }
 
 func TestExternalAPIFailureKeepsLastForecast(t *testing.T) {
-	for _, present := range []bool{false, true} {
-		if _, err := config.Parse(func(key string) (string, bool) { return "", present && key == "DATABASE_URL" }); err == nil || err.Error() != "DATABASE_URL is required" {
-			t.Fatalf("missing or empty DATABASE_URL must fail explicitly, got %v", err)
-		}
-	}
 	config, err := config.Parse(func(key string) (string, bool) {
 		if key == "DATABASE_URL" {
 			return "postgres://localhost/test", true

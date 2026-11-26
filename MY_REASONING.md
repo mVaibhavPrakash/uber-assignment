@@ -1,71 +1,164 @@
-# AI use and decision history
+# Implementation reasoning and AI use
 
-## AI-use disclosure
+I built the project as an explainable decision-support prototype: compare historical completed trips under different rainfall conditions, combine that evidence with a forecast, and identify a zone where driver availability merits review. I kept the distinction between projected trip activity and actual driver shortage explicit throughout the design.
 
-**Implementation ownership:** I led the implementation and supplied the project code, requirements and design direction for iterative review. I made the product and scope decisions and directed which changes to retain, simplify or reject. AI supported this work through code revisions and refinement; it was not the sole author of the project.
+## AI use disclosure
 
-**Tools and uses:** I used ChatGPT to discuss alternatives and challenge assumptions, and OpenAI Codex to improve readability, refactor code, refine tests, add validation and error handling, and help verify the application. AI assistance included code changes, SQL refinements, Docker troubleshooting and documentation updates.
+I led the implementation, supplied the project code, requirements and design direction, and decided which suggestions to retain, simplify or reject. ChatGPT supported design discussions and challenged assumptions. OpenAI Codex assisted with code revisions, refactoring, SQL, error handling, tests, Docker troubleshooting and documentation. AI was not the sole author of the project.
 
-**Accepted refinements:** clearer seasonal SQL comparisons; separation of database calls from business logic; explicit no-intervention/insufficient/unavailable handling; forecast version/expiry checks; focused test improvements; and simpler controller-facing messages and uncertainty.
+Accepted refinements included separating storage from scoring, expressing the historical comparison in SQL, distinguishing no intervention from insufficient evidence and unavailability, and checking forecast version and expiry on each cached read. I reviewed generated changes against the running application and revised outputs that added unnecessary complexity or overstated what the data could support.
 
-**Rejected or substantially changed outputs:** I rejected Python-based preparation and automated coordinate discovery in favor of Go preparation and editable zone metadata. Complex quota/worker/retry machinery was simplified to three bounded attempts with exponential jitter. A report-like UI was reduced to one primary action; sample-count/statistical detail was subsequently removed from the controller view. Repeated seed field validation was moved to an offline cleanup step, leaving prepared-file decoding and transactional COPY in the submitted application.
-
-**Review, validation and risks:** AI-assisted changes were revised against my requirements and the running implementation. Validation included the three focused tests with real PostgreSQL for SQL behavior, Go vet/build, TypeScript/Vite builds, live API requests, browser checks for all five states, integer serialization checks, isolated full-data seeding and a clean-copy Docker run. Earlier documentation retained outdated Chicago/synthetic-data assumptions and was corrected for the real NYC seed. Suggested complexity and confident-looking statistical presentation were reduced; five samples and the intervention threshold remain explicit heuristics. The example intervention is visibly fictional and is not evidence of forecast accuracy. No out-of-sample accuracy, causal validation or production-readiness claim is made.
-
-**Most challenging implementation areas:** preparing and aligning historical mobility/weather hours with New York calendar fields; balancing seasonal relevance against sparse rainy-hour evidence; preserving the distinction between missing data and observed zero; and keeping forecast persistence, cached recommendations, expiry and frontend insights tied to the same version/window during refreshes and failures.
-
-**Cache simplification:** Instead of deep-copying every recommendation read, implemented simpler model. The refinement keeps published recommendations read-only and moves summary shaping and stale-warning lists into the API layer. Refreshes atomically replace the cached result; version/window/expiry checks remain. The existing recommendation test was extended to cover repeated summaries followed by insights, unchanged cached warnings, concurrent refresh/read behavior, version changes and expiry. The read-only rule is an internal contract, not a Go language guarantee; historical/forecast cache protections remain unchanged.
+Important corrections included the initial all-zone eligibility rule, the rejection of valid light rain, excessive test scenarios, and scheduler mutexes that protected no actual concurrent access. Earlier documentation also retained outdated Chicago and synthetic-data assumptions; those were corrected to reflect the submitted NYC dataset.
 
 ## Earlier discussions and decisions
 
-The following notes preserve the original planning and implementation history, including rejected approaches and checks that were pending at the time. They are not the current implementation status. For current behavior, see [DESIGN_AND_SCALABILITY.md](DESIGN_AND_SCALABILITY.md).
+The implementation developed in stages. The experiments and earlier proposals below explain how the final design emerged. They are development history: the initial Chicago scope, synthetic fixtures, preparation tooling and larger test suite should not be read as the current application configuration.
 
-Planning-stage AI disclosure: I used ChatGPT to explore alternatives and challenged its suggestions rather than accepting them automatically. This records actual discussion, not completed code or tests. The current AI assistance and completed validation are summarized above.
+### Initial Chicago approach and retrieval problems
 
-| AI suggestion / discussion | My challenge and resulting decision |
+The initial approach used Chicago TNP and 77 community areas, with one weather coordinate per area. I first considered a published pickup centroid instead of averaging coordinates, because an average coordinate might not represent a meaningful pickup location. These were early Chicago choices; the final application uses 20 NYC zones with manually supplied coordinates.
+
+Before building around Chicago retrieval, I tested whether the required history could be obtained within practical request limits. A small successful response did not establish that a full historical aggregation would work, so I also tested counts, grouped queries and larger exports.
+
+| Experiment | Recorded result | Effect on the decision |
+|---|---|---|
+| Chicago date-filtered retrieval of five rows | Succeeded in 1.294196 seconds. | Confirmed basic access, but not bulk feasibility. |
+| Chicago single-day count and seven-day aggregation | Each timed out at 60 seconds without a response. | Raised concerns about relying on server-side historical aggregation. |
+| Chicago five-column CSV request | Returned 23,259 parsed rows in an incomplete 60-second response; recorded 735,914 transferred bytes and 2.299 MiB locally. | Demonstrated partial retrieval, not a complete usable export. |
+| Chicago two-column CSV request for 10,000 rows | HTTP 200 in 13.675634 seconds, with 14,405 transferred bytes; actual row count was not verified. | Was insufficient evidence that the complete history could be collected reliably. |
+| Attempted Chicago bulk export endpoint | HTTP 410 in 1.562915 seconds. | That endpoint was unavailable; other export methods were not ruled out. |
+| NYC January 2022 Yellow Taxi Parquet | HTTP 200; 38,139,949 bytes in 3.466139 seconds. | Established a concrete downloadable alternative. |
+| NYC January 2022 HVFHV Parquet | HTTP 200; 374,619,188 bytes in 31.026937 seconds. | Supported choosing downloadable HVFHV history for preparation. |
+
+These were individual development experiments, not controlled source-performance benchmarks. I considered reducing the historical period, but the daily Chicago query failures made that an uncertain solution. I switched to NYC while preserving the hourly zone/weather comparison architecture. HVFHV was selected for marketplace relevance; Yellow Taxi was smaller but less directly aligned with that focus. I rejected adding DuckDB and kept preparation in Go.
+
+### NYC preparation and operational scope
+
+The first NYC work focused on projected Parquet reads, monthly checkpoints, zone lookup validation and alignment between pickup timestamps and historical weather. On November 25, preparation notes recorded `parquet-go` v0.25.1, zone/year weather checkpoints and quota reservations. These belong to the separate offline preparation work, not the runtime recommendation service.
+
+I rejected Python preparation and automated polygon or coordinate discovery. The intermediate approach used editable JSON coordinates with `0,0` placeholders until representative locations were supplied manually. An automatically selected top-volume scope was also considered. When the manually edited zone list differed from that approach, I explicitly chose the edited 20-zone list. The final seed preserves that scope rather than replacing it with a calculated top 20.
+
+Early validation used fictional inputs: six pickup rows produced three accepted records, while missing timestamps, out-of-month pickups and unknown zones were rejected. Other checks covered integer zone types, local timestamp conversion, DST exclusions, checkpoint reuse and preserving manual metadata edits. A 192-observation synthetic seed across two noncontiguous zone IDs supported initial SQL and startup checks. Those fixtures tested implementation behavior; they were not public-data accuracy or performance results.
+
+At that stage, the full historical run and runtime features were still unfinished. The final submitted seed later replaced those development fixtures with 697,440 matched observations for 2022-2025. The earlier statement that full public data was not yet prepared described that intermediate stage, not the submitted dataset.
+
+I also separated preparation from reviewer setup. Downloading, aggregation, checkpoint and quota tooling moved outside the assignment runtime. Prepared JSON, mandatory-field cleanup performed offline, and transactional COPY became the setup boundary. This removed preparation-only dependencies and repeated cleanup work from startup.
+
+### Choosing a historical comparison
+
+I challenged both exact calendar dates and all-year weekday/hour averages. Exact dates offer few comparable observations across years, while all-year groups mix seasons. Monthly groups, rolling calendar windows and adaptive fallback were explored as alternatives.
+
+AI proposed rolling seasonal windows with bounded fallback. I questioned whether widening the window to gain only a few rainy observations justified the extra rules, whether those observations remained comparable, and how the fallback would be explained. I chose fixed meteorological seasons, the same weekday and local hour, and one reusable startup aggregation. All seven weekdays remain separate, including Saturday and Sunday; the field was clarified as `day_of_week` with ISO numbering.
+
+Weights for rainy versus dry hours and temporal decay were also discussed. I deferred them and retained signed additional trips, so a decrease in one hour offsets an increase in another. The horizon remains configurable in whole hours. More trip records within an hour do not create more independent rainy-hour observations.
+
+The SQL was subsequently extended with absolute and percentage uplift and rainy-hour sample standard deviation. Its CTE reuses historical averages, its snow filter is shared, and unknown statistics remain null. Earlier PostgreSQL fixtures checked negative uplift, a single rainy observation, zero-baseline percentage handling and the then-current exclusion of trace rain. The later light-rain decision described below deliberately changed that grouping.
+
+### Forecast reliability and interval alignment
+
+A full-period Open-Meteo archive experiment returned about 1.69 MiB for one area, but that alone did not establish quota usage or total preparation runtime. Early designs explored batching, workers and persistent quota tracking. I later simplified runtime fetching to one seeded-area batch with bounded retries; offline preparation retained its own quota tooling.
+
+A live Open-Meteo check validated 600 forecast rows across the selected 20 zones and exposed a request-contract issue: the provider rejected `forecast_hours` together with explicit hour bounds. The request was corrected. That validated response handling, not recommendation accuracy.
+
+The weather fields also needed interval alignment. Provider rain, snow and probability values label the preceding hour, so the parser assigns them to the interval starting one hour earlier. Forecast persistence was kept transactional, with publication only after a complete save. Uncertain commit outcomes trigger a reload rather than repeating the write blindly.
+
+Earlier verification covered rollback, retained forecasts on failures, cancellation, Retry-After, invalid responses and cache ownership. Some of those checks were later removed from the retained suite, and preparation-only worker/quota machinery was removed from the runtime. The current defaults and four-test scope are described below.
+
+### AI suggestions and my decisions
+
+| Topic or suggestion | My challenge and resulting change |
 |---|---|
-| Spatial alternatives and average coordinates | I chose 77 community areas and one coordinate each. I questioned whether averaging coordinates gives a meaningful place; revised to most frequent published pickup centroid, with sanity checks. |
-| Optimizing historical period | I pointed out that period optimization was not the original ask. Keep configurable dates, focus on functional prototype. |
-| Small archive request batches | I tried a full-period Open-Meteo request; it returned quickly and was about 1.69 MiB for one area. Larger requests with bounded workers/fallback are reasonable; total quota/runtime unverified. |
-| One combined JSON | I requested three separate artifacts and proposed generating area/trip aggregations in parallel while processing Chicago data. AI suggested server-side aggregation to avoid raw downloads. |
-| Hourly weather fetching | I distinguished data resolution from fetching cadence, proposed 2–3h fetch and no overlapping jobs; settled on 3h fetch and hourly scoring. |
-| Rigid SQL numeric checks | I questioned fixed area ID bounds and requested invalid mandatory records be dropped. Keep PK/FK/NOT NULL and validate values in Go. |
-| Fixed 2h aggregation | I asked how 4/6/12h would work, then 15m and minute data. This exposed the distinction between resolution, horizon and cadence. AI initially proposed generic buckets; I questioned their implementation cost and chose fixed hourly aggregation with configurable whole-hour horizons. |
-| Raw data retention and weather resolution | I proposed preserving original timestamps alongside hourly aggregates for extensibility. AI suggested optional 15-minute files; I pointed out our selected weather API returns hourly data. We agreed to omit raw and 15-minute artifacts, retain source references and aggregate hourly only. |
-| Database coupling | I requested repository-based fetching so future PostgreSQL replacement with MySQL or DynamoDB would not require changes everywhere. Use domain contracts and injected PostgreSQL adapter; alternative databases still require new storage/query implementations and validation. |
-| Missing indexing | I challenged how millions of rows would be processed quickly and whether weekday rather than hour should lead the index. Initially revised to day/date index for rolling queries; final startup full aggregation makes it unnecessary unless profiling proves otherwise. |
-| Rain then dry hour | I asked how weights should work and requested configurable values. Initially considered rain/dry weights and time decay; later agreed to defer both and rank absolute signed extra trips. |
-| Weekday-only or exact date | I challenged both: exact date has only a few samples, all-year weekdays mix seasons. AI proposed rolling seasonal windows with bounded fallback. I questioned how the window was chosen and whether adding only 3–4 rainy samples was meaningful. I was concerned about explaining unnecessary complexity in the interview. We agreed to fixed meteorological seasons, same day/hour, no adaptive fallback, and a single startup SQL aggregation. |
-| Weekday terminology | I asked whether Saturday/Sunday were excluded. Clarified all seven days independently and renamed field day_of_week with ISO numbering. |
-| Reviewer setup | I requested Docker, explicit clean database reset, simple code and migrations. AI initially suggested schema only; I questioned migration requirement. Minimal up/down migration satisfies brief. |
-| Reliability and scope | I requested meaningful tests, retry/timeouts, no overlap, graceful shutdown and underlying error preservation. I also asked to reread assignment and challenge complexity. Final proposed scope returns to three tables and three tests, with future scaling documented separately. |
+| Automatically optimize the historical period | Kept the period configurable and focused on a functional comparison rather than treating period selection as a validated optimization. |
+| Server-side Chicago aggregation instead of raw downloads | Tested the retrieval path; timeouts and an unavailable export endpoint contributed to the NYC Parquet decision. |
+| Combine preparation artifacts | Discussed separate area, trip and weather artifacts during preparation; the submitted runtime ultimately consumes one prepared seed. |
+| Fetch hourly because forecasts are hourly | Distinguished data resolution from fetch cadence; chose three-hour weather refresh and hourly recommendation updates. |
+| Generic 15-minute or arbitrary-duration buckets | Questioned the benefit when both historical preparation and provider data are hourly; retained configurable whole-hour windows. |
+| Retain raw timestamps and add 15-minute outputs | Deferred them because finer mobility granularity would not establish finer weather information. |
+| Direct database access throughout business code | Requested repository contracts and dependency injection. Another database still needs its own queries, storage adapter and validation. |
+| Add historical indexes before measuring | Revisited the query pattern: startup aggregates the full history, so extra indexes require a demonstrated query-plan benefit. |
+| Rigid area-ID assumptions and repeated seed validation | Kept database keys, foreign keys and required columns; moved mandatory-field cleanup to preparation instead of imposing fixed zone-ID bounds. |
+| Schema creation without an explicit migration deliverable | Requested minimal up/down migrations and an explicit setup/reset workflow. |
+| Broad reliability machinery and test expansion | Retained bounded requests, underlying error information and graceful shutdown, but later reduced runtime complexity and tests to the actual assignment scope. |
 
-## Accepted suggestions and remaining validation
+Subsequent review of the running application led to the partial-coverage, light-rain, cache, scheduler-lock and test-scope changes below. Those changes were responses to concrete behavior and code ownership, rather than simply accepting the first AI-generated design.
 
-Submission scope was tightened at my request: the offline preparation module is now local-only and excluded from Git and Docker. The assignment retains only the prepared JSON, generic artifact validation, minimal seed loader and migrations needed for offline reviewer setup. SQL and live-weather tests moved into the assignment module, and Parquet dependencies and preparation-only settings moved out of its module/configuration. Both modules' tests and the assignment vet/build passed after separation. Ongoing compiled download/export processes continue using the same data paths.
+## Current data selection and preparation
 
-Earlier AI-assisted weather refinement covered dynamic seeded-area batching, bounded retries and workers, full response validation, preceding-hour probability/rain/snow alignment, transactional forecast replacement and immutable cache publication. The persistent quota limiter was moved into a shared internal package so offline and runtime callers can use the same ledger. Tests cover failed COPY rollback, coherent reads, retained prior versions on 503/timeouts/invalid data, permanent-4xx handling, Retry-After, cancellation, stale/expired behavior, safe copies and ambiguous commit reconciliation without write retries. A real Open-Meteo batch validated 600 rows across the 20 manually selected zones. That check found the provider rejects `forecast_hours` combined with explicit hour bounds; the request and regression fixture were corrected. This validates the response contract, not recommendation accuracy. Runtime scoring, the combined scheduler and the frontend are subsequent tasks.
+The submitted seed contains 20 manually selected NYC zones and 697,440 matched hourly HVFHV trip/weather observations for 2022-2025. The selection is an explicit operational scope, not an automatically chosen top-20 list. Each zone has a manually supplied representative coordinate.
 
-Historical SQL correction: after the plan added historical uplift and rainy dispersion, the AI-assisted SQL revision used a CTE and shared snow filter, added nullable absolute/percentage uplift and rainy sample standard deviation to domain evidence, and preserved immutable pointer copies. Minimum-sample eligibility and forecast-weighted scoring were not changed. The existing SQL integration test was extended rather than adding another top-level test. Real PostgreSQL checks passed for the specified numeric example, negative uplift, snow/trace exclusions, NULL standard deviation with one rainy observation, and NULL percentage for zero dry baseline. `go test ./...` and `go vet ./...` passed. The fixture EXPLAIN still shows one historical scan; no production performance claim follows from that small fixture.
+Chicago TNP was explored first, but bounded retrieval experiments encountered timeouts for daily counts and weekly aggregation. NYC downloadable Parquet data provided a practical preparation path. Those experiments informed source selection; they do not establish that every Chicago retrieval method would fail or that NYC is universally faster.
 
-I authorized parallel work: a data agent supervises the full 2022–2025 download/checkpoint run with AI assistance on the SQL/cache work. After observing a manually edited area file, Codex asked whether the intended scope was automatic top volume or the user's edited list. I chose the edited 20-zone list. Its IDs and coordinates are backed up in `data/manual_coordinate_inputs.json`; explicit scope-file handling preserves that decision without changing all-zone monthly aggregation.
+I chose Go for offline preparation and editable zone metadata rather than Python preparation or automated coordinate discovery. Downloading, aggregation and mandatory-field cleanup remain outside the submitted runtime. Setup consumes prepared JSON and copies it transactionally into PostgreSQL. This avoids repeating a large preparation pipeline during reviewer startup while preserving valid zero values and nullable optional measurements.
 
-The historical PostgreSQL adapter, immutable seasonal cache, and startup loading service are implemented. Validation covers real PostgreSQL aggregation, safe-copy snapshot behavior, failed-load error preservation, shared New York calendar rules, seed rollback, and an actual fixture query plan. A server smoke check loaded 192 synthetic groups and served two fixture area IDs; health correctly stayed unavailable because runtime forecasts/scoring are later tasks. Public mobility preparation has passed the January pilot; the separate full-period run remains in progress. These checks do not establish production SQL performance or real rainy-hour sample coverage.
-I accepted modular Go, SQL historical comparison, persistent forecasts, replaceable in-memory cache, configurable heuristics and explicit uncertainty. The three-table merge, three-test limit and duration threshold were assistant-proposed refinements for assignment compliance; confirm during implementation. No claim that these defaults are optimal.
+## Historical comparison and scoring
 
-Next: inspect real sample coverage, verify timezone and precipitation alignment, review generated code, run SQL/scoring/failure tests, compare query plans, verify Docker setup and record actual findings. If using Codex, record tool and tasks, important accepted/rejected outputs, incorrect assumptions, review steps, test results and technically challenging parts. Do not present planned checks as completed. The most challenging design questions so far were seasonal relevance versus sample size, granularity versus source precision, and preserving reliable recommendations during forecast failures.
+I selected fixed meteorological seasons with the same zone, weekday and New York local hour. Exact dates provide very few observations across years; all-year groups mix seasonal patterns, and monthly or adaptive windows add sparsity or fallback decisions. The chosen grouping is explainable and reusable, but I have not established that it outperforms those alternatives.
 
-## Final recommendation decision and interview reasoning
-I chose an explainable seasonal comparison rather than unvalidated adaptive windows. Exact dates are sparse; all-year day/hour mixes seasons; monthly groups may be too sparse. Fixed seasons have abrupt boundaries and may still lack rainy observations. I accept those limitations and will show sample counts and insufficient evidence rather than manufacture confidence. I agreed to defer weights and temporal decay, keeping the signed expected additional trips formula and configurable horizon/threshold. I have not yet measured whether fixed seasons outperform other approaches. The next step is actual coverage inspection and, if time permits, a small held-out comparison, not a new forecasting framework.
+PostgreSQL calculates historical means, counts, rainy-hour dispersion and signed differences. Go checks eligibility, applies forecast probability, aggregates the planning window and ranks zones. Keeping these responsibilities separate makes the calculation traceable and keeps the scoring engine independent of SQL and HTTP clients.
 
-## Revised data-source decision
+For a qualifying rainy hour, the model uses `(rainy mean - below-threshold mean) * precipitation probability / 100`. Negative effects remain negative when summed. Five historical observations per relevant class and 100 additional trips over the default two-hour window are configurable heuristics, not calibrated confidence or operational thresholds.
 
-Current coordinate decision: use editable static JSON, initially `0,0`, and wait for the developer to supply representative coordinates manually. Automated polygon processing and Python were rejected. The lookup version, not coordinate edits, determines monthly checkpoint identity.
+### Partial coverage
 
-Earlier preparation/refinement notes (November 25, 2026): the preparation code now uses pinned `parquet-go` v0.25.1, bounded projected reads, monthly JSON checkpoints, lookup-based zone validation, frozen scope selection, editable coordinate metadata, and zone/year weather checkpoints with persistent weighted quota reservations. The earlier Python and Go polygon approaches were removed after the updated plan explicitly ruled them out. No automatic coordinate discovery remains. Runtime repositories retain generic operational-area types and the existing three-table schema.
+During my review of the running dashboard, I observed only 13 of 20 zones assessable and challenged the AI-assisted all-zone eligibility rule. A zone with complete evidence could exceed the threshold but still receive no recommendation because another zone lacked history.
 
-Validation used fictional Parquet and HTTP inputs: six pickup rows produced three accepted records; missing timestamps, out-of-month pickups and unknown zones were rejected. Tests checked int32/int64 zone columns, naive local timestamp conversion, DST exclusion, deterministic selection, placeholder gating, manual-edit preservation, mobility/weather checkpoint reuse and quota persistence across limiter restarts. NYC synthetic seed artifacts contain 192 matched hourly observations across two noncontiguous zone IDs. The PostgreSQL fixture verified New York calendar fields and transactional seed behavior. This is not a benchmark of an official month and does not establish real sample coverage. Official metadata retrieval permission was declined; no complete public NYC seed data was prepared or substituted with synthetic data.
-I tested Chicago retrieval and aggregation rather than assuming the API would scale. I considered reducing the period to one or two years, but even daily counts timed out. I tested NYC Yellow Taxi and HVFHV downloads and agreed to use NYC while preserving the original Chicago hourly-area design. I raised concerns about weather quotas and all-zone extensibility. We chose a configurable initial 20-zone scope, independent weather per zone, and offline Parquet aggregation. DuckDB was rejected; the preparation path uses Go. Full-month performance, live weather coverage and the final implementation still need validation. Earlier Chicago choices above are historical, not current requirements.
+I chose to rank complete zones and qualify the result with assessed/total coverage. Excluded zones can have higher impact, so the UI does not describe the winner as highest across the entire monitored scope. With partial coverage and no qualifying action, it avoids declaring normal operations. Each recommended zone still needs evidence for every planning-window hour.
 
-## Dataset decision and measured experiments
-Chicago TNP was the original source. Basic date-filtered retrieval (5 rows) succeeded in 1.294196s; single-day COUNT and seven-day aggregation timed out at 60s with no response. Five-column CSV returned 23,259 parsed rows in an incomplete 60s response (735,914 transferred bytes, 2.299 MiB local); two-column CSV requested 10,000 rows in 13.675634s (HTTP 200, 14,405 transferred bytes; actual row count not verified). The attempted bulk export endpoint returned HTTP 410 in 1.562915s; other exports were not ruled out. NYC January 2022 Yellow Taxi Parquet downloaded 38,139,949 bytes in 3.466139s; HVFHV downloaded 374,619,188 bytes in 31.026937s, both HTTP 200. These are user-measured download experiments, not controlled database comparisons. HVFHV is selected for marketplace relevance; Yellow Taxi is smaller but less directly representative. Go Parquet aggregation on a full official month, official zone metadata and live weather coverage remain unverified. Four years and 20 zones are initial scope, not proven optimal. More trips per hour do not increase the number of independent rainy hours.
+### Light rain
+
+I rejected describing valid 0.4 mm rainfall as unsupported weather. Historical observations and forecasts now share a numeric boundary: nonnegative rain below the configured threshold belongs to the comparison group; rain at or above the threshold belongs to the rainy group. Below-threshold hours require baseline history and contribute zero modeled additional trips.
+
+This is a modeling assumption about the incremental effect below the threshold, not a claim that light rain has no real effect. I retained "Typical dry-weather trips" for readability and added a tooltip explaining light-rain inclusion. Snow remains excluded. The SQL change requires rebuilding and restarting the API to refresh its statistics, not reseeding existing observations.
+
+## Scheduler and concurrency decisions
+
+I separated forecast resolution, provider refresh cadence and recommendation cadence. Hourly observations do not require hourly provider requests. The current defaults fetch 30 forecast hours per zone every three hours, compute recommendations hourly or when their inputs change, and check for work every 15 minutes or at the next hour boundary.
+
+The next-hour wake-up follows recommendation validity. At 10:53, the result covers 11:00-13:00 and normally expires at 11:00. Waiting 15 minutes would postpone replacement until 11:08, so the scheduler wakes at 11:00 instead. Jobs remain sequential; a provider delay can still delay computation.
+
+I reviewed the callers before removing the scheduler's tick mutex and state RWMutex. The server starts one `Run()` goroutine, which calls each tick synchronously and waits for its jobs to finish. Only that loop reads and updates job state; HTTP handlers do not access it. Neither lock was protecting concurrent access in the implemented execution path.
+
+I removed both mutex fields and their lock/unlock calls, deleted the unused `State()` getter and scheduler-busy error, and made `Tick()` a private `tick()` helper. The helper reads `s.state` directly. This reduces code and makes state ownership explicit instead of retaining locks for hypothetical callers. `Run()` must still be called only once per scheduler instance; concurrent manual triggers or external state readers would require revisiting synchronization.
+
+Shared forecast and recommendation caches retain their concurrency protections because HTTP reads do overlap background updates. The weather service also retains its separate refresh guard. After the scheduler changes, Go tests, vet and build passed; the SQL integration test requires its database environment variable. The smaller test suite does not establish race coverage, so the reason for removing these locks is the verified caller and ownership structure.
+
+Provider failures receive up to three attempts by default, with exponential jitter and respect for Retry-After. A failed refresh retains usable previous weather. Stale warnings, forecast coverage, version matching and expiry prevent that fallback from becoming an indefinitely valid recommendation. The scheduler's next weather attempt is still governed by the refresh interval; its regular checks do not create continuous provider retries.
+
+## Cache ownership and request consistency
+
+I replaced deep copies of every recommendation read with atomic publication of a completed result. API summaries copy area headers before omitting hourly evidence, and stale responses allocate their own warning list. Readers must not modify published nested data; Go does not enforce that contract.
+
+Every request still validates weather usability, forecast version, planning window and expiry. A cached pointer can remain present after the decision expires, so presence alone is insufficient. Insight requests can bind to the displayed version and window to avoid mixing evidence from different decisions.
+
+## Validation and retained tests
+
+The initial plan called for three focused top-level tests. As features were refined, the recommendation test accumulated nested cases for eligibility, serialization, cache ownership, concurrent reads and expiry. Keeping three top-level names did not keep the actual suite small. I requested a reduction to four explicit tests that directly affect the recommendation:
+
+| Test | Decision it protects |
+|---|---|
+| Assessed-zone ranking | A zone with insufficient rainy samples neither blocks nor outranks an eligible zone; the result reports partial coverage and the expected trip calculation. |
+| Light rain | Below-threshold rainfall remains assessable with baseline history and does not trigger an intervention. |
+| Historical SQL | PostgreSQL groups below-threshold and qualifying rain correctly, excludes snow and returns the expected historical comparison. |
+| Provider failure | Bounded retries preserve a usable prior forecast, while expired weather is rejected. |
+
+The SQL test uses an isolated schema and requires TEST_DATABASE_URL. Earlier cache/concurrency, serialization and nested scenario checks were removed to keep the submitted suite focused. That accepts less regression coverage for response shaping and concurrency; it does not remove their runtime guarantees or ownership requirements.
+
+Validation performed during development included Go tests, vet/build, frontend builds, PostgreSQL checks, live API requests, UI rendering checks, and Docker setup checks. Earlier broader checks are development history rather than retained automated coverage. Fictional rain scenarios are explicitly labeled and use the real scoring function; they do not demonstrate live prediction accuracy.
+
+## Reviewer setup and local debugging
+
+Reviewer setup also changed in response to practical failures. The prepared seed exceeded GitHub's regular per-file limit, so it moved to Git LFS. The documented setup command pulls LFS data before building and seeding. Database credentials were removed from Go and Compose defaults; local-only examples remain in `.env.example`.
+
+The first rain demo reused the normal API/UI ports. When it collided with an existing backend, I separated the sample onto 8081/3001 so it could run alongside the normal application on 8080/3000. An interrupted `npm ci` also exposed a Windows file lock: a running Vite preview held `esbuild.exe`, leaving dependencies partly removed. Stopping that project process and reinstalling repaired it; the instructions now distinguish initial installation from ordinary startup.
+
+For terminal debugging, I retained PostgreSQL in Docker and exposed it only on localhost, avoiding the need to discover credentials for a separately installed PostgreSQL instance. Windows blocked the first chosen port, 5433, so the mapping changed to the verified available port 15432. Existing database data was preserved, and the historical SQL integration test passed through the host connection. The Go backend can then run in a terminal or debugger using the same assignment database.
+
+## Technical challenges and remaining limits
+
+The most demanding parts were aligning historical and forecast intervals with New York calendar fields, handling sparse rainy evidence without confusing missing values with zero, and keeping persisted forecasts, cached recommendations and UI insights consistent across refreshes and expiry. Separating offline preparation from runtime setup also required keeping the reviewer workflow reproducible without downloading raw history.
+
+The application remains a single-instance prototype. Planning uses the next two complete hours and does not estimate activity remaining in the current hour. It does not include live driver supply, waiting riders, holidays, events or weather effects beyond the implemented rainfall comparison. Historical association, probability weighting and sample counts do not establish causality or calibrated forecast confidence.
+
+Further work would start with held-out evaluation and operational input quality before introducing more complex models. Multiple replicas would also require explicit scheduler coordination and cache consistency. Neither is claimed as implemented.
+
+See [design tradeoffs](TRADEOFFS.md), [scheduler and recommendation architecture](docs/SCHEDULER_AND_RECOMMENDATIONS.md), and [database design and SQL](DESIGN_AND_SCALABILITY.md#database-design-and-important-sql) for the corresponding implementation details.

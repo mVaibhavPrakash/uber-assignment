@@ -26,8 +26,8 @@ func recommendationLimitations() []string {
 	}
 }
 
-// Itevaluates each zone, then chooses an action only when the entire scope
-// has enough evidence. It has no storage, network or cache side effects.
+// Evaluates each zone and ranks those with complete planning-window evidence.
+// It has no storage, network or cache side effects.
 func EvaluatePlanningWindow(now time.Time, options Options, inputs []AreaInput) (Result, error) {
 	// Step 1: Check the scoring settings and create the planning window.
 	if err := options.Validate(); err != nil {
@@ -122,41 +122,49 @@ func estimateAreaWindow(input AreaInput, window Window, options Options) (AreaEv
 
 // Sets the status and message the user sees.
 func selectScopeDecision(result *Result, missingForecast bool) {
-	// Step 1: Missing weather means we cannot make a current recommendation.
-	if missingForecast {
+	// Step 1: Missing zones do not veto a usable zone; their impact remains unknown.
+	if result.Coverage.Assessed < result.Coverage.Total {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Only %d of %d zones can be assessed. %d zones could not be assessed because forecast or historical evidence is incomplete or weather is unsupported. A higher-impact zone may be among them.", result.Coverage.Assessed, result.Coverage.Total, result.Coverage.Total-result.Coverage.Assessed))
+	}
+
+	if result.Coverage.Assessed == 0 && missingForecast {
 		result.Status = "unavailable"
 		result.DecisionReason = ReasonForecastUnavailable
 		result.Message = apperrors.ForecastUnavailable.Message
 		result.ErrorCode = apperrors.ForecastUnavailable.Code
 		return
 	}
-	// Step 2: Require enough evidence for every zone before choosing a winner.
-	if result.Coverage.Assessed != result.Coverage.Total {
+
+	if result.Coverage.Assessed == 0 {
 		result.Status = "insufficient_evidence"
 		result.DecisionReason = ReasonIncompleteEvidence
-		result.Message = "The forecast and historical evidence do not support an estimate for every monitored zone. Review the hourly evidence before deciding."
+		result.Message = "No monitored zone has sufficient forecast and historical evidence for the full planning window. Review the hourly evidence before deciding."
 		return
 	}
-	// Step 3: Find the highest extra-trip estimate and compare it with the threshold.
+
+	// Step 2: Find the highest extra-trip estimate and compare it with the threshold.
 	winner := areaWithHighestAdditionalTrips(result.Areas)
 	result.HighestModeledAdditional = cloneFloatPointer(winner.Additional)
 	if *winner.Additional < result.Threshold {
 		explainNoIntervention(result)
 		return
 	}
-	// Step 4: Recommend reviewing driver availability in the winning zone.
+	// Step 3: Recommend reviewing driver availability in the winning zone.
 	result.Primary = &winner
 	result.Status = "action_required"
 	result.DecisionReason = ReasonHighestImpact
-	result.Message = "Review driver availability in " + winner.Area.Name + ". Rain is forecast in this zone, which has the highest modeled additional completed trips among the monitored zones and meets the intervention threshold."
+	result.Message = "Review driver availability in " + winner.Area.Name + ". Rain is forecast in this zone, which has the highest modeled additional completed trips among the assessed zones and meets the intervention threshold."
 }
 
-// Checks all monitored forecast hours, not just the selected
+// Checks all assessed forecast hours, not just the selected
 // zone. Zero extra trips alone does not mean that no rain is forecast.
 func explainNoIntervention(result *Result) {
 	result.DecisionReason = ReasonBelowThreshold
-	result.Message = fmt.Sprintf("Rain is forecast, but no monitored zone reaches the intervention threshold of %g additional completed trips over this planning window.", result.Threshold)
+	result.Message = fmt.Sprintf("Rain is forecast, but no assessed zone reaches the intervention threshold of %g additional completed trips over this planning window.", result.Threshold)
 	for _, area := range result.Areas {
+		if !area.Assessable {
+			continue
+		}
 		for _, hour := range area.Hourly {
 			if hour.Forecast != nil && hour.Forecast.RainMM >= result.RainfallThresholdMM {
 				return
@@ -164,14 +172,17 @@ func explainNoIntervention(result *Result) {
 		}
 	}
 	result.DecisionReason = ReasonNoQualifyingRain
-	result.Message = fmt.Sprintf("No rain at or above %g mm/hour is forecast in the monitored zones for this planning window. No additional rain-related completed trips are projected.", result.RainfallThresholdMM)
+	result.Message = fmt.Sprintf("No rain at or above %g mm/hour is forecast in the assessed zones for this planning window. No additional rain-related completed trips are projected in those zones.", result.RainfallThresholdMM)
 }
 
 // Higher absolute additional trips win; equal estimates use the smaller zone ID.
 func areaWithHighestAdditionalTrips(areas []AreaEvidence) AreaEvidence {
-	best := areas[0]
-	for _, area := range areas[1:] {
-		if *area.Additional > *best.Additional || (*area.Additional == *best.Additional && area.Area.ID < best.Area.ID) {
+	var best AreaEvidence
+	for _, area := range areas {
+		if !area.Assessable {
+			continue
+		}
+		if best.Additional == nil || *area.Additional > *best.Additional || (*area.Additional == *best.Additional && area.Area.ID < best.Area.ID) {
 			best = area
 		}
 	}

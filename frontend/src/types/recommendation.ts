@@ -28,6 +28,7 @@ export interface AreaEvidence {
 }
 
 export interface Recommendation {
+  rainfall_threshold_mm: number;
   status: 'action_required' | 'no_intervention' | 'insufficient_evidence' | 'unavailable';
   decision_reason: string;
   message: string;

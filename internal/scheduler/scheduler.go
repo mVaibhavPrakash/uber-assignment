@@ -3,11 +3,8 @@ package scheduler
 
 import (
 	"context"
-	"mobilitycontrolroom/internal/apperrors"
-
 	"log/slog"
 	"mobilitycontrolroom/internal/config"
-	"sync"
 	"time"
 )
 
@@ -34,9 +31,8 @@ type Scheduler struct {
 	recommendations Recommendations
 	config          config.Config
 	clock           func() time.Time
-	tick            sync.Mutex
-	stateMu         sync.RWMutex
-	state           State
+	// Only Run reads and updates job state.
+	state State
 }
 
 func New(w Weather, r Recommendations, c config.Config, clock func() time.Time) *Scheduler {
@@ -46,15 +42,7 @@ func New(w Weather, r Recommendations, c config.Config, clock func() time.Time) 
 	return &Scheduler{weather: w, recommendations: r, config: c, clock: clock}
 }
 
-func (s *Scheduler) State() State {
-	s.stateMu.RLock()
-	defer s.stateMu.RUnlock()
-	return s.state
-}
-
 func (s *Scheduler) recordJobOutcome(weatherJob bool, attempt, success time.Time, err error) {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
 	job := &s.state.Recommendation
 	if weatherJob {
 		job = &s.state.Weather
@@ -68,17 +56,15 @@ func (s *Scheduler) recordJobOutcome(weatherJob bool, attempt, success time.Time
 	}
 }
 
-func (s *Scheduler) Tick(ctx context.Context) error {
-	if !s.tick.TryLock() {
-		return apperrors.ErrSchedulerBusy
-	}
-	defer s.tick.Unlock()
+func (s *Scheduler) tick(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	state := s.State()
+	state := s.state
 	now := s.clock()
 	refreshed := false
+
+	// At the server restart both conditions will be true
 	if state.Weather.LastAttempt.IsZero() || now.Sub(state.Weather.LastAttempt) >= s.config.WeatherRefresh {
 		refreshed = s.runWeatherRefreshJob(ctx, now)
 	}
@@ -92,22 +78,29 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	return nil
 }
 
+// Run is called once and runs each job to completion before checking again.
 func (s *Scheduler) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		_ = s.Tick(ctx)
+		_ = s.tick(ctx)
 		now := s.clock()
 		delay := s.config.SchedulerCheck
+
+		// At 10:53, waiting 15 minutes would mean checking again at 11:08.
+		// The recommendation expires at 11:00, so the UI would have no valid
+		// recommendation for 8 minutes. Wait 7 minutes and update at 11:00 instead.
 		untilHour := now.UTC().Truncate(time.Hour).Add(time.Hour).Sub(now)
 		if untilHour < delay {
 			delay = untilHour
 		}
 		if delay <= 0 {
+			// Always wait a little so we don't keep checking without a pause.
 			delay = time.Millisecond
 		}
 		timer := time.NewTimer(delay)
+
 		select {
 		case <-ctx.Done():
 			timer.Stop()

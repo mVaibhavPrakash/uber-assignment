@@ -101,7 +101,7 @@ func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if result.Status == "unavailable" {
 		status = 503
 		state = "unavailable"
-	} else if result.Freshness == "stale" || result.Status == "insufficient_evidence" {
+	} else if result.Freshness == "stale" || result.Status == "insufficient_evidence" || result.Coverage.Assessed < result.Coverage.Total {
 		state = "degraded"
 	}
 	writeJSON(w, status, map[string]any{"status": state, "recommendation_status": result.Status, "forecast_freshness": result.Freshness, "forecast_version": result.ForecastVersion})

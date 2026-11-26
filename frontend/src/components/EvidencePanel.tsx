@@ -17,8 +17,8 @@ export default function EvidencePanel({ evidence, result }: { evidence: AreaEvid
           <td>{hour.forecast ? <>{formatNumber(hour.forecast.rain_mm)} mm · {hour.forecast.precipitation_probability}%
             {hour.forecast.snowfall_cm > 0 && <><br />{formatNumber(hour.forecast.snowfall_cm)} cm snow</>}</> : 'Unavailable'}</td>
           <td>{formatNumber(hour.baseline_trips)}</td><td>{formatNumber(hour.additional_trips)}</td>
-          <td className="assessment">{describeHourAssessment(hour)}</td>
-        </tr><tr className="mobile-evidence"><td colSpan={4}>{describeHourAssessment(hour)}</td></tr></Fragment>)}</tbody>
+          <td className="assessment">{describeHourAssessment(hour, result.rainfall_threshold_mm)}</td>
+        </tr><tr className="mobile-evidence"><td colSpan={4}>{describeHourAssessment(hour, result.rainfall_threshold_mm)}</td></tr></Fragment>)}</tbody>
       </table>
     </div>
   </>;

@@ -4,6 +4,8 @@ Current implementation details are documented first. Earlier alternatives and sc
 
 ## Architecture
 
+For a step-by-step explanation of startup, job timing, scoring, cached reads and failures, see [Scheduler and recommendation architecture](docs/SCHEDULER_AND_RECOMMENDATIONS.md).
+
 The application runs as three services: a React/TypeScript frontend served by Nginx, a Go API with an in-process scheduler, and PostgreSQL. A separate, one-shot setup container loads the prepared seed. Node.js is used to build the frontend; it is not required in the frontend runtime container.
 
 ```mermaid
@@ -50,7 +52,7 @@ The API builds summary responses by copying only area headers and the primary ar
 
 This reduces per-request copying within one process. It does not provide distributed scheduling or cross-instance cache consistency. Historical and forecast caches retain their existing ownership protections; this change concerns recommendation result reads only.
 
-Verification extends the existing recommendation test with [cache/response checks](tests/recommendation_cache_test.go), including concurrent refreshes, stale warnings, version mismatches and expiry. The race detector passed in a temporary Linux container. After rebuilding the API, 40 concurrent live summary/insight requests preserved the two-hour evidence and warning counts, with ready health and fresh 20/20-zone coverage.
+The current suite keeps four decision-focused tests: partial-coverage recommendation scoring, below-threshold light rain, historical SQL comparisons and provider failure/forecast expiry. Earlier cache, concurrency and response-shaping checks were removed to keep the submitted suite small; read-only ownership remains an implementation contract.
 
 | Endpoint | Purpose |
 |---|---|
@@ -67,11 +69,11 @@ Source references: [NYC TLC trip records and High Volume FHV data dictionary](ht
 
 `data/public/seed.json` contains 20 selected zones and 697,440 matched hourly observations from NYC TLC HVFHV trips and historical weather for 2022–2025. Initialization decodes the already-cleaned JSON and copies observations into PostgreSQL in one transaction, without repeating preparation-time field validation. Downloading, aggregation and null-field cleanup tools remain separate in the ignored `data-preparation/` folder, excluded from the Docker build and unnecessary at startup. Optional weather measurements may remain null; mandatory null or missing fields are removed offline before publishing the seed.
 
-PostgreSQL stores areas, historical observations and hourly forecasts. The repository performs meaningful SQL aggregation and comparison: dry/rainy averages, counts, rainy-hour sample standard deviation, and absolute/percentage differences grouped by zone, season, weekday and New York hour. Snow is excluded. Unknown statistics remain null. Go loads the reusable historical statistics at startup.
+PostgreSQL stores areas, historical observations and hourly forecasts. The repository performs meaningful SQL aggregation and comparison: below-threshold/rainy averages, counts, rainy-hour sample standard deviation, and absolute/percentage differences grouped by zone, season, weekday and New York hour. Snow is excluded. Unknown statistics remain null. Go loads the reusable historical statistics at startup.
 
-For each forecast hour, additional trips are `(rainy average - dry average) × precipitation probability`. Dry hours contribute zero extra trips and require only dry evidence. Rainy hours require both classes. The default five observations per relevant class is a coverage heuristic, not a significance test. Snow, trace rain, missing forecasts and insufficient history prevent assessment.
+For each qualifying rainy forecast hour, additional trips are `(rainy average - below-threshold average) × precipitation probability`. Historical and forecast hours use the same numeric boundary: `0 <= rain_mm < threshold` is the comparison baseline, including dry conditions and light rain; `rain_mm >= threshold` is rainy. Below-threshold hours contribute zero modeled extra trips and require only baseline evidence. Qualifying rainy hours require both classes. The default five observations per relevant class is a coverage heuristic, not a significance test. Snow, missing forecasts and insufficient history still prevent assessment. The UI retains "Typical dry-weather trips" for readability, with a tooltip explaining that below-threshold light rain is included. JSON names such as `dry_mean` are retained for compatibility.
 
-Go sums signed changes over the next two complete hours. All monitored zones must be assessable before selecting the largest qualifying total; ties use zone ID. The default intervention threshold is 100 additional trips over two hours. Sample, rainfall and intervention thresholds are configurable. The UI displays backend decisions and explanations without recalculating eligibility or ranking.
+Go sums signed changes over the next two complete hours. Each ranked zone must be assessable for every planning-window hour. The largest qualifying total among assessed zones can be recommended even when other zones lack evidence; ties use zone ID. Coverage and warnings explicitly qualify the comparison, because excluded zones may have higher impact. No assessed zones yields insufficient evidence, or unavailable when forecast evidence is missing. Partial coverage without a qualifying action does not imply normal operations across all monitored zones. The default intervention threshold is 100 additional trips over two hours. Sample, rainfall and intervention thresholds are configurable. The UI displays backend decisions and explanations without recalculating eligibility or ranking.
 
 Weather refreshes every three hours with three attempts, exponential backoff and jitter. Forecasts persist in PostgreSQL. Recommendations refresh hourly and after successful weather refreshes. The UI distinguishes normal, intervention, insufficient evidence, stale weather and unavailable results. Selecting another zone changes supporting evidence, not the primary decision.
 
@@ -92,8 +94,8 @@ The main analytical query is [historical.sql](internal/repository/postgres/histo
 ```sql
 WITH historical_stats AS (
     SELECT area_id, season, day_of_week, hour_of_day,
-           AVG(trip_count) FILTER (WHERE rain_mm = 0) AS dry_avg,
-           COUNT(*) FILTER (WHERE rain_mm = 0) AS dry_n,
+           AVG(trip_count) FILTER (WHERE rain_mm >= 0 AND rain_mm < $1) AS dry_avg,
+           COUNT(*) FILTER (WHERE rain_mm >= 0 AND rain_mm < $1) AS dry_n,
            AVG(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_avg,
            COUNT(*) FILTER (WHERE rain_mm >= $1) AS rain_n,
            STDDEV_SAMP(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_stddev
@@ -110,7 +112,7 @@ FROM historical_stats;
 
 `$1` is the configured qualifying-rain threshold, default 0.5 mm/hour. This answers: **for the same zone and comparable seasonal weekday/hour, how do completed trips differ between dry and rainy conditions?** SQL performs the meaningful aggregation and comparison required by the assessment. `FILTER` keeps the two populations separate, the CTE reuses their averages, and `NULLIF` avoids division by zero. A missing mean or single-observation standard deviation remains null. Sample standard deviation measures rainy-hour dispersion, not confidence or causality.
 
-Go consumes these SQL results and applies minimum samples, forecast probability, window summation, eligibility and ranking. For example, dry mean 1,200 and rainy mean 1,700 produce SQL uplift of 500; a 90% probability gives 450 modeled additional trips in Go. This is an illustrative calculation, not a live observation.
+Go consumes these SQL results and applies minimum samples, forecast probability, window summation, eligibility and ranking. For example, below-threshold mean 1,200 and rainy mean 1,700 produce SQL uplift of 500; a 90% probability gives 450 modeled additional trips in Go. This is an illustrative calculation, not a live observation.
 
 Forecast storage uses one committed read of the current snapshot and a transaction to replace all forecast rows; readers therefore do not receive a partially replaced snapshot. [forecast.go](internal/repository/postgres/forecast.go) contains these queries. Historical SQL runs at startup and its results are cached; historical-data/config changes require a restart to rebuild that cache.
 
@@ -128,7 +130,7 @@ All counts below are approximate potential observations per area/hour before wea
 | Distance-weighted calendar average | Varies | Smooth weights | Calibration, effective sample size; future |
 | Regression / boosted trees / time series | Varies | Multiple factors, nonlinearities | Training, validation, serving, explainability; future |
 
-Final: winter Dec–Feb, spring Mar–May, summer Jun–Aug, autumn Sep–Nov. All seven ISO days independently, same area and hour. Compare rainy/dry means and counts from the same group. Five samples per category is a heuristic, not statistical significance. Adding three observations to three can reduce sampling variance if representative, but cannot guarantee better accuracy; broader windows may increase bias. Fixed season is selected for clarity and scope, not because measured superiority has been established. No automatic fallback. Report insufficient evidence, coverage and old data/holiday/pandemic/temperature confounding. Conservative citywide coverage policy retained; assess actual coverage early and seek approval before relaxing it.
+Final: winter Dec–Feb, spring Mar–May, summer Jun–Aug, autumn Sep–Nov. All seven ISO days independently, same area and hour. Compare rainy/dry means and counts from the same group. Five samples per category is a heuristic, not statistical significance. Adding three observations to three can reduce sampling variance if representative, but cannot guarantee better accuracy; broader windows may increase bias. Fixed season is selected for clarity and scope, not because measured superiority has been established. No automatic fallback. Report insufficient evidence, coverage and old data/holiday/pandemic/temperature confounding. The original all-zone coverage policy was replaced with the user-approved assessed-zone ranking rule described above; per-zone sample requirements and historical grouping remain unchanged.
 
 ## Duration, granularity and cadence
 Independent dimensions: mobility resolution 1h, weather 1h, planning horizon 2h, recommendation refresh 1h, weather fetch 3h, scheduler check 15m. Use time.Duration for scheduling and whole-hour horizons, fixed hourly hour_start and hour_of_day (0–23). Source metadata must declare hourly resolution. 4/6/12/24h use same engine, UTC iteration, local date lookup; N*H evaluations (40/80/120/240/480 at 20 zones). Cross-midnight uses each hour’s season/day/hour key; forecast coverage >= horizon+staleness+alignment. Longer horizon threshold scales 50 trips/hour, but can dilute short spikes; future peak-hour gate. Multiple simultaneous horizons need API parameter, cache key/window/version and scheduling changes; prefix sums useful for frequent windows, preserve missing-evidence counts.
@@ -143,7 +145,7 @@ Independent dimensions: mobility resolution 1h, weather 1h, planning horizon 2h,
 Theoretical, not measured. NYC pickup timestamps may support finer aggregation, but selected weather is hourly. Hourly total cannot be divided into quarters reliably (100/200/500/400 vs assumed 300 each). Future 15m ingestion reaggregate source, change SQL alignment to containing hourly weather interval, avoid summing repeated weather, rebuild stats; no exact subhour rain claim. Minute data requires new actual event source and suitable weather resolution. At scale use COPY, partitioning, retention and incremental 1m -> 5m/15m/1h rollups preserving sums/counts and classification; choose resolution compatible with requested window. Fetching every minute does not improve model resolution and increases quotas/writes. Current implementation has no configurable data resolution and rejects non-whole-hour horizons. No raw or 15-minute artifacts are generated; retain source references and reproducible queries. The selected historical and forecast weather feeds are hourly, so finer mobility alone cannot establish subhour rain timing.
 
 ## Scoring alternatives and final policy
-E=(R-D)*p for qualifying rain; p is any-precipitation probability proxy, not calibrated rain probability. Dry E=0 with dry evidence; snow/trace unsupported. Sum signed effects, require complete area window, eligibility >=50 trips/hour times duration. Rank absolute additional completed trips, tie by area ID. Example rainy D1200,R1700,p=.9 ->450; next dry D1400 ->0; baseline2600, expected3050. Hypothetical only.
+E=(R-D)*p for qualifying rain; p is any-precipitation probability proxy, not calibrated rain probability. Below-threshold E=0 with baseline evidence; snow remains unsupported. Sum signed effects, require complete area window, eligibility >=50 trips/hour times duration. Rank absolute additional completed trips, tie by area ID. Example rainy D1200,R1700,p=.9 ->450; next dry D1400 ->0; baseline2600, expected3050. Hypothetical only.
 
 | Ranking | Pros | Cons / decision |
 |---|---|---|

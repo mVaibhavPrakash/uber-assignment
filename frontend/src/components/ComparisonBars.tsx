@@ -28,7 +28,7 @@ export default function ComparisonBars({
       ] as const).map(([kind, label, value]) => (
         <div className="bar-row" key={kind}>
           <div className="bar-label">
-            <span>{label}</span><strong>{formatNumber(value)}</strong>
+            <span title={kind === "baseline" ? "Includes dry conditions and light rain below the configured rain threshold." : undefined}>{label}</span><strong>{formatNumber(value)}</strong>
           </div>
           <div className="bar-track">
             <div className={`bar ${kind}`} style={{ width: width(value) }} />
@@ -38,7 +38,7 @@ export default function ComparisonBars({
       <p className="muted comparison-caption">
         {evidence.additional_trips === 0
           ? "No additional rain-related trip volume is projected."
-          : `${formatSignedNumber(evidence.additional_trips)} completed trips compared with the dry-weather baseline.`}
+          : `${formatSignedNumber(evidence.additional_trips)} completed trips compared with typical dry-weather trips.`}
       </p>
     </div>
   );
