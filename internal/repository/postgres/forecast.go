@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"mobilitycontrolroom/internal/apperrors"
+	"mobilitycontrolroom/internal/appErrors"
 
 	"fmt"
 	"mobilitycontrolroom/internal/database"
@@ -57,7 +57,7 @@ func (r *Repository) LoadLatest(ctx context.Context) (repository.ForecastSnapsho
 		return repository.ForecastSnapshot{}, fmt.Errorf("read forecast snapshot: %w", err)
 	}
 	if len(s.Hours) == 0 {
-		return repository.ForecastSnapshot{}, apperrors.ErrNoSnapshot
+		return repository.ForecastSnapshot{}, appErrors.ErrNoSnapshot
 	}
 	if err = domain.ValidateForecast(s, areas); err != nil {
 		return repository.ForecastSnapshot{}, fmt.Errorf("invalid persisted forecast: %w", err)
@@ -70,7 +70,7 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	if err != nil {
 		return err
 	}
-	defer apperrors.Rollback(tx, "forecast", &err)
+	defer appErrors.Rollback(tx, "forecast", &err)
 	if err = lockForecastPublication(ctx, tx); err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	if err = copyForecast(ctx, tx, s); err != nil {
 		return err
 	}
-	return apperrors.CommitForecast(ctx, tx)
+	return appErrors.CommitForecast(ctx, tx)
 }
 
 // Keeps zone data stable and allows one forecast writer at a time.

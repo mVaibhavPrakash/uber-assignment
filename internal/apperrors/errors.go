@@ -1,6 +1,6 @@
-// Package apperrors keeps application error definitions and handling in one place.
+// Package appErrors keeps application error definitions and handling in one place.
 // It does not depend on business services or repositories.
-package apperrors
+package appErrors
 
 import (
 	"context"

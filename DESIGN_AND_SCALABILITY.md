@@ -37,16 +37,18 @@ The startup path loads zones and historical SQL statistics from PostgreSQL and r
 | `internal/history/`, `internal/cache/` | Reusable historical lookups and in-memory snapshots. |
 | `internal/weather/`, `internal/scheduler/` | Bounded forecast fetching/retries, persistence coordination and sequential refresh jobs. |
 | `internal/repository/`, `internal/repository/postgres/` | Storage contracts and PostgreSQL queries/transactions; business services do not call SQL directly. |
-| `internal/domain/`, `internal/apperrors/` | Shared calendar/forecast rules and centralized errors. |
+| `internal/domain/`, `internal/appErrors/` | Shared calendar/forecast rules and centralized errors. |
 | `frontend/src/` | `components/`, `types/`, `state/`, `styles/`, `api/` and display `utils/`; `App.tsx` composes the page. `frontend/main.tsx` mounts React. |
 
 The recommendation package separates responsibilities further: `hour.go` assesses one hour, `engine.go` aggregates/ranks zones, `service.go` joins inputs and manages result validity, `types.go` defines contracts and `json.go` rounds only outgoing trip quantities. The former deep-copy file has been removed.
+
+Decision selection uses one pass over the completed area evidence to count assessable zones, find the highest total, and distinguish missing forecasts from insufficient history and no qualifying rain. Areas are sorted by ID first, so retaining the first equal estimate preserves the smaller-ID tie rule. Hourly scoring, input validation, result expiry and JSON rounding remain separate responsibilities.
 
 ### Recommendation ownership and responses
 
 The scheduler constructs a complete result privately and atomically replaces the cached pointer. Once published, its nested slices, pointers and hourly values are read-only. A reader holding an older result can finish safely while a refresh publishes a new one; the old result is never edited in place.
 
-`Service.CurrentRecommendation` checks forecast version, planning window and expiry using the same validity helper as `NeedsRecompute`. It returns a small result value with current freshness; nested evidence is shared, not deep-copied. Go does not enforce immutability here: internal callers must honor the read-only contract.
+`Manager.CurrentRecommendation` checks forecast version, planning window and expiry using the same validity helper as `NeedsRecompute`. It returns a small result value with current freshness; nested evidence is shared, not deep-copied. Go does not enforce immutability here: internal callers must honor the read-only contract.
 
 The API builds summary responses by copying only area headers and the primary area header before omitting their hourly fields. Insights serialize the shared hourly evidence directly. Fresh responses reuse read-only warnings; stale responses allocate a separate warning list. Response preparation never truncates cached evidence or appends to cached warnings. JSON rounding remains read-only and does not affect scoring.
 

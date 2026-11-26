@@ -3,7 +3,7 @@ package tests
 import (
 	"context"
 	"errors"
-	"mobilitycontrolroom/internal/apperrors"
+	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/config"
 	"mobilitycontrolroom/internal/repository"
 	"mobilitycontrolroom/internal/weather"
@@ -75,7 +75,7 @@ func TestExternalAPIFailureKeepsLastForecast(t *testing.T) {
 		t.Fatalf("last usable forecast was lost: %+v %v", view, err)
 	}
 	expired, err := service.CurrentForecast(now.Add(6*time.Hour + time.Second))
-	if !errors.Is(err, apperrors.ErrForecastExpired) || expired.Snapshot != nil {
+	if !errors.Is(err, appErrors.ErrForecastExpired) || expired.Snapshot != nil {
 		t.Fatal("expired forecast remained usable during outage")
 	}
 }

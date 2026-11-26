@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"mobilitycontrolroom/internal/apperrors"
+	"mobilitycontrolroom/internal/appErrors"
 
 	"mobilitycontrolroom/internal/recommendation"
 	"mobilitycontrolroom/internal/repository"
@@ -28,7 +28,7 @@ func Handler(service Service, clock func() time.Time) http.Handler {
 	mux.HandleFunc("GET /api/areas/{id}/insights", h.handleInsights)
 	mux.HandleFunc("GET /api/health", h.handleHealth)
 
-	return apperrors.WithRequestRecovery(mux)
+	return appErrors.WithRequestRecovery(mux)
 }
 
 type handler struct {
@@ -38,7 +38,7 @@ type handler struct {
 
 func (h *handler) handleAreas(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
-		apperrors.WriteHTTPError(w, apperrors.QueryNotAllowed)
+		appErrors.WriteHTTPError(w, appErrors.QueryNotAllowed)
 		return
 	}
 	writeJSON(w, 200, h.service.Areas())
@@ -46,12 +46,12 @@ func (h *handler) handleAreas(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleRecommendations(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
-		apperrors.WriteHTTPError(w, apperrors.QueryNotAllowed)
+		appErrors.WriteHTTPError(w, appErrors.QueryNotAllowed)
 		return
 	}
 	result := omitHourlyEvidence(h.service.CurrentRecommendation(h.clock()))
 	if result.Status == "unavailable" {
-		result.ErrorCode = apperrors.RecommendationUnavailable.Code
+		result.ErrorCode = appErrors.RecommendationUnavailable.Code
 		writeJSON(w, 503, struct {
 			recommendation.Result
 			RequestID string `json:"request_id"`
@@ -64,7 +64,7 @@ func (h *handler) handleRecommendations(w http.ResponseWriter, r *http.Request) 
 func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
-		apperrors.WriteHTTPError(w, apperrors.InvalidAreaID)
+		appErrors.WriteHTTPError(w, appErrors.InvalidAreaID)
 		return
 	}
 	known := false
@@ -75,12 +75,12 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !known {
-		apperrors.WriteHTTPError(w, apperrors.AreaNotFound)
+		appErrors.WriteHTTPError(w, appErrors.AreaNotFound)
 		return
 	}
 	result := h.service.CurrentRecommendation(h.clock())
 	if result.Status == "unavailable" {
-		apperrors.WriteHTTPError(w, apperrors.CurrentInsightsUnavailable)
+		appErrors.WriteHTTPError(w, appErrors.CurrentInsightsUnavailable)
 		return
 	}
 	if !validateInsightVersionAndWindow(w, r, result) {
@@ -92,7 +92,7 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	apperrors.WriteHTTPError(w, apperrors.InsightsUnavailable)
+	appErrors.WriteHTTPError(w, appErrors.InsightsUnavailable)
 }
 
 func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -119,22 +119,22 @@ func validateInsightVersionAndWindow(w http.ResponseWriter, r *http.Request, res
 	query := r.URL.Query()
 	for key := range query {
 		if key != "forecast_version" && key != "window_start" {
-			apperrors.WriteHTTPError(w, apperrors.UnknownQuery)
+			appErrors.WriteHTTPError(w, appErrors.UnknownQuery)
 			return false
 		}
 	}
 	if version := query.Get("forecast_version"); version != "" && version != result.ForecastVersion {
-		apperrors.WriteHTTPError(w, apperrors.SnapshotChanged)
+		appErrors.WriteHTTPError(w, appErrors.SnapshotChanged)
 		return false
 	}
 	if start := query.Get("window_start"); start != "" {
 		at, e := time.Parse(time.RFC3339, start)
 		if e != nil {
-			apperrors.WriteHTTPError(w, apperrors.InvalidWindowStart)
+			appErrors.WriteHTTPError(w, appErrors.InvalidWindowStart)
 			return false
 		}
 		if !at.Equal(result.Window.Start) {
-			apperrors.WriteHTTPError(w, apperrors.WindowChanged)
+			appErrors.WriteHTTPError(w, appErrors.WindowChanged)
 			return false
 		}
 	}

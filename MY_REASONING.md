@@ -132,6 +132,12 @@ Every request still validates weather usability, forecast version, planning wind
 
 ## Validation and retained tests
 
+I then made the call order explicit because fewer lines alone did not make the recommendation path easy to follow. The coordinator is named `Manager`, and `ComputeAndPublish()` reads as four numbered steps: cached weather, cached historical evidence, scoring, and publication. The existing publication policy moved into `publishRecommendation()`. This is a Go struct with methods rather than an additional framework or generic pipeline. The scheduler still performs live weather fetching separately; API requests still only read the saved result. The scoring engine also labels its three stages: validate, estimate zones, and select a decision.
+
+I revisited the recommendation package to reduce helper calls and repeated selection passes without changing decisions. Previously, a missing-weather flag passed through hourly aggregation into the engine, while separate helpers scanned the areas for a winner and a no-action explanation. Selection now derives those facts from completed area evidence in one pass. Sorting by zone ID before selection preserves tie-breaking without a second comparison rule. Sample checks are written directly in the hourly eligibility switch instead of a trivial forwarding helper. Validation, evidence copies, cache version/window/expiry checks and JSON formatting remain because they protect distinct behavior.
+
+For this refactor, a temporary comparison against the original package matched 2,000 generated scoring cases at full precision and in serialized JSON, including messages and errors. Additional comparisons checked empty caches, version changes, freshness, expiry, weather failures and cancellation. These were local refactor checks, not additional retained tests or forecast-accuracy validation.
+
 The initial plan called for three focused top-level tests. As features were refined, the recommendation test accumulated nested cases for eligibility, serialization, cache ownership, concurrent reads and expiry. Keeping three top-level names did not keep the actual suite small. I requested a reduction to four explicit tests that directly affect the recommendation:
 
 | Test | Decision it protects |

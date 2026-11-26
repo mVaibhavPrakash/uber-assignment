@@ -64,13 +64,14 @@ func (s *Scheduler) tick(ctx context.Context) error {
 	now := s.clock()
 	refreshed := false
 
-	// At the server restart both conditions will be true
+	// 1. Fetch and save new weather when due. Always attempt it after startup.
 	if state.Weather.LastAttempt.IsZero() || now.Sub(state.Weather.LastAttempt) >= s.config.WeatherRefresh {
 		refreshed = s.runWeatherRefreshJob(ctx, now)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// 2. Update the recommendation after a weather refresh or when its result is due.
 	now = s.clock()
 	if refreshed || state.Recommendation.LastAttempt.IsZero() || now.Sub(state.Recommendation.LastAttempt) >= s.config.RecommendationRefresh || s.recommendations.NeedsRecompute(now) {
 		s.runRecommendationJob(ctx, now)

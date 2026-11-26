@@ -6,7 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
-	"mobilitycontrolroom/internal/apperrors"
+	"mobilitycontrolroom/internal/appErrors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,7 +33,7 @@ func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]b
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !apperrors.IsRetryableWeatherError(err) || attempt == c.config.MaxAttempts {
+		if !appErrors.IsRetryableWeatherError(err) || attempt == c.config.MaxAttempts {
 			return nil, fmt.Errorf("fetch weather: %w", err)
 		}
 		if err := waitForRetryOrCancellation(ctx, retryDelayWithJitter(delay, retryAfter)); err != nil {
@@ -68,7 +68,7 @@ func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]by
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, parseRetryAfter(response.Header.Get("Retry-After")), apperrors.ReadProviderError(response)
+		return nil, parseRetryAfter(response.Header.Get("Retry-After")), appErrors.ReadProviderError(response)
 	}
 	const maxBytes = 8 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))

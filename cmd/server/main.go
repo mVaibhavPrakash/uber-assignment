@@ -70,7 +70,7 @@ func run() error {
 }
 
 // initializeServices loads database evidence and connects weather and scoring.
-func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg config.Config) (*weather.Service, *recommendation.Service, error) {
+func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg config.Config) (*weather.Service, *recommendation.Manager, error) {
 
 	historicalCtx, cancelHistorical := context.WithTimeout(ctx, cfg.HistoricalQueryTimeout)
 	evidence, err := history.Load(historicalCtx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: cfg.MinRainfallMM}, cfg.Location)
@@ -91,7 +91,7 @@ func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg c
 	if err != nil {
 		return nil, nil, fmt.Errorf("restore weather: %w", err)
 	}
-	recommendations, err := recommendation.NewService(evidence, forecasts, cfg)
+	recommendations, err := recommendation.NewManager(evidence, forecasts, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

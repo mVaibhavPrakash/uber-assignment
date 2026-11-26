@@ -88,18 +88,30 @@ Result expiry is the earlier of the next hour boundary or the forecast's maximum
 
 ## Recommendation computation
 
+Start at `Manager.ComputeAndPublish()` in [recommendation/service.go](../internal/recommendation/service.go). `Manager` is a Go struct with methods, serving the role of a coordinator class. It owns the historical and weather dependencies, scoring options and result cache. The workflow is written as four sequential steps:
+
+| Step | Call | Responsibility |
+|---|---|---|
+| 1 | `weather.CurrentForecast(now)` | Read and validate the cached forecast. |
+| 2 | `joinForecastAndHistory()` | Match forecast hours with cached historical trip statistics. |
+| 3 | `EvaluatePlanningWindow()` | Calculate hourly estimates, sum zones and select the decision. |
+| 4 | `publishRecommendation()` | Attach forecast metadata, limit expiry and publish the completed result. |
+
+An error stops the workflow before the next step. An unusable forecast publishes an unavailable result; cancellation or other computation errors retain the existing cache. Cached reads still enforce validity. Live weather fetching belongs to the scheduler's preceding weather job, not to this computation method.
+
 ```text
 Scheduler.tick()
   -> runRecommendationJob()
-  -> Service.ComputeAndPublish()
+  -> Manager.ComputeAndPublish()
      -> CurrentForecast(now)
      -> joinForecastAndHistory()
      -> EvaluatePlanningWindow()
         -> estimateAreaWindow()
            -> estimateHourTrips()
         -> selectScopeDecision()
-     -> attach forecast version and expiry
-     -> atomically publish the completed result
+     -> publishRecommendation()
+        -> attach forecast version and expiry
+        -> atomically publish the completed result
 ```
 
 `CurrentForecast()` reads cached weather and checks its age and window coverage; it does not call the provider. A forecast snapshot contains its version, fetch time and hourly rain, snowfall and precipitation probability, normally 600 records for 20 zones over 30 hours.
@@ -121,7 +133,7 @@ Incomplete zones do not veto an eligible zone. Recommendations identify the high
 ```text
 GET /api/recommendations
   -> handleRecommendations()
-  -> Service.CurrentRecommendation(now)
+  -> Manager.CurrentRecommendation(now)
      -> check weather usability
      -> load the cached result
      -> match forecast version and planning window
