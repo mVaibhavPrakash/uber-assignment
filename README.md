@@ -34,6 +34,44 @@ npm run dev
 
 The frontend proxies requests to port 8080. It refreshes every 60 seconds and suppresses expired recommendations and results from failed refreshes.
 
+## Try a rainy recommendation in the UI
+
+This separate local harness uses fictional inputs with the existing scoring engine and API handlers. It needs Go 1.25+ and Node.js 22; Docker, PostgreSQL, Git LFS data and live weather are unnecessary. The sample uses API port **8081** and UI port **3001**, so the normal application on ports 8080/3000 can keep running.
+
+From the repository root, start the sample API:
+
+```sh
+go run ./tools/rain-demo
+```
+
+In a second terminal, start the frontend in sample mode. Run `npm ci` only for the initial dependency installation (skip it if dependencies are already installed). Before reinstalling dependencies, stop local Vite dev/preview processes: Windows can lock esbuild while they run. After installation, normal and sample UIs can run together.
+
+```sh
+cd frontend
+npm ci
+npm run dev:sample
+```
+
+Open http://localhost:3001. This UI proxies API requests exclusively to the sample server on port 8081. The page explicitly labels the scenario as fictional sample data. Select Astoria to inspect the hourly breakdown.
+
+| Input | First hour | Second hour |
+|---|---:|---:|
+| Rain | 1 mm | 0 mm |
+| Precipitation probability | 90% | 90% |
+| Historical dry average | 1,200 trips | 1,400 trips |
+| Historical rainy average | 1,700 trips | 1,700 trips (unused for a dry hour) |
+| Historical samples | 5 per class | 5 per class |
+
+Expected: **review driver availability in Astoria**, **450 additional trips**, **2,600 baseline trips**, **3,050 expected trips**, and a **100-trip intervention threshold**. The existing engine calculates `(1700 - 1200) × 90% = 450`; the dry hour adds zero. Times follow the current planning window so the UI can display the result without it being expired.
+
+Verify the same calculation without the UI:
+
+```sh
+go test ./tests -run 'TestRecommendationMessages/action$' -v
+```
+
+Stop the two sample processes with Ctrl+C when finished. The normal application remains available at http://localhost:3000. The harness adds no scoring rules and never reads or changes the database.
+
 ## Architecture
 
 React/TypeScript is served by Nginx, which proxies API requests to Go. The Go application loads historical SQL statistics from PostgreSQL, periodically fetches and persists Open-Meteo forecasts, and computes one current recommendation. A one-shot setup container loads the prepared seed; no historical downloads are required at startup.

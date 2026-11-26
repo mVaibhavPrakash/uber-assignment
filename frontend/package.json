@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:sample": "vite --mode rain-demo",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
