@@ -2,16 +2,23 @@ package weather
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
-	"mobilitycontrolroom/internal/appErrors"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 )
+
+type providerError struct {
+	status int
+	reason string
+}
 
 // Calls the endpoint up to MaxAttempts times. Temporary failures wait
 // longer after each attempt; permanent errors stop immediately.
@@ -33,7 +40,7 @@ func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]b
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !appErrors.IsRetryableWeatherError(err) || attempt == c.config.GetMaxAttempts() {
+		if !isRetryableWeatherError(err) || attempt == c.config.GetMaxAttempts() {
 			return nil, fmt.Errorf("fetch weather: %w", err)
 		}
 		if err := waitForRetryOrCancellation(ctx, retryDelayWithJitter(delay, retryAfter)); err != nil {
@@ -70,7 +77,7 @@ func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]by
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, parseRetryAfter(response.Header.Get("Retry-After")), appErrors.ReadProviderError(response)
+		return nil, parseRetryAfter(response.Header.Get("Retry-After")), readProviderError(response)
 	}
 
 	const maxBytes = 8 << 20
@@ -104,4 +111,34 @@ func waitForRetryOrCancellation(ctx context.Context, delay time.Duration) error 
 	case <-timer.C:
 		return nil
 	}
+}
+
+// Error includes the provider's status and reason for server logs.
+func (e *providerError) Error() string {
+	if e.reason != "" {
+		return fmt.Sprintf("forecast provider HTTP %d: %s", e.status, e.reason)
+	}
+	return fmt.Sprintf("forecast provider HTTP %d", e.status)
+}
+
+// Identifies HTTP 408/429/5xx and temporary network failures worth retrying.
+func isRetryableWeatherError(err error) bool {
+	var provider *providerError
+	if errors.As(err, &provider) {
+		return provider.status == 408 || provider.status == 429 || provider.status >= 500 && provider.status <= 599
+	}
+	var network net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &network) && (network.Timeout() || network.Temporary())
+}
+
+// Reads a bounded error reason from an unsuccessful API response.
+func readProviderError(response *http.Response) error {
+	var failure struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(io.LimitReader(response.Body, 2048)).Decode(&failure)
+	if len(failure.Reason) > 512 {
+		failure.Reason = failure.Reason[:512]
+	}
+	return &providerError{status: response.StatusCode, reason: failure.Reason}
 }

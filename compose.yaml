@@ -18,11 +18,7 @@ services:
     build: .
     ports:
       - "8080:8080"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in your local .env or environment}
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
@@ -37,9 +33,9 @@ services:
     working_dir: /workspace
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - 'exec psql "$$DATABASE_URL" -X -v reset="$$RESET_SEED" -f database/seed.psql'
+      - 'exec psql "$${DATABASE_URL:?Set DATABASE_URL in .env}" -X -v reset="$$RESET_SEED" -f database/seed.psql'
+    env_file: .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in your local .env or environment}
       RESET_SEED: "false"
     volumes:
       - ./database:/workspace/database:ro

@@ -3,18 +3,12 @@
 package appErrors
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
-	"net"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 const XRequestId = "X-Request-ID"
@@ -72,77 +66,4 @@ func WithRequestRecovery(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
-}
-
-type providerError struct {
-	status int
-	reason string
-}
-
-// Error includes the provider's status and reason for server logs.
-func (e *providerError) Error() string {
-	if e.reason != "" {
-		return fmt.Sprintf("forecast provider HTTP %d: %s", e.status, e.reason)
-	}
-	return fmt.Sprintf("forecast provider HTTP %d", e.status)
-}
-
-// Identifies HTTP 408/429/5xx and temporary network failures worth retrying.
-func IsRetryableWeatherError(err error) bool {
-	var provider *providerError
-	if errors.As(err, &provider) {
-		return provider.status == 408 || provider.status == 429 || provider.status >= 500 && provider.status <= 599
-	}
-	var network net.Error
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &network) && (network.Timeout() || network.Temporary())
-}
-
-// Reads a bounded error reason from an unsuccessful API response.
-func ReadProviderError(response *http.Response) error {
-	var failure struct {
-		Reason string `json:"reason"`
-	}
-	_ = json.NewDecoder(io.LimitReader(response.Body, 2048)).Decode(&failure)
-	if len(failure.Reason) > 512 {
-		failure.Reason = failure.Reason[:512]
-	}
-	return &providerError{status: response.StatusCode, reason: failure.Reason}
-}
-
-// Cleans up an unfinished transaction and keeps any earlier error.
-// A committed transaction needs no cleanup.
-func Rollback(tx pgx.Tx, operation string, result *error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		*result = errors.Join(*result, fmt.Errorf("rollback %s: %w", operation, err))
-	}
-}
-
-// Marks an uncertain save so the caller reloads instead of writing twice.
-func CommitForecast(ctx context.Context, tx pgx.Tx) error {
-	if err := tx.Commit(ctx); err != nil {
-		wrapped := fmt.Errorf("commit forecast snapshot: %w", err)
-		if errors.Is(err, pgx.ErrTxCommitRollback) {
-			return wrapped
-		}
-		return errors.Join(ErrCommitAmbiguous, wrapped)
-	}
-	return nil
-}
-
-// Asks the caller to reload a saved version after an uncertain commit.
-// If reloading fails, discard the cached result. Never repeat the database write.
-func ReloadAfterUncertainForecastCommit(ctx context.Context, timeout time.Duration, version string, original error, reload func(context.Context) (string, error), invalidate func()) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
-	defer cancel()
-	savedVersion, err := reload(ctx)
-	if err != nil {
-		invalidate()
-		return errors.Join(original, fmt.Errorf("reconcile forecast commit: %w", err))
-	}
-	if savedVersion == version {
-		return nil
-	}
-	return original
 }

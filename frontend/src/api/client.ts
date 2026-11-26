@@ -1,5 +1,11 @@
 import type { Insights, Recommendation } from '../types/recommendation';
 
+export function matchesForecastWindow(details: Insights, result: Recommendation) {
+  return details.forecast_version === result.forecast_version
+    && details.window.start === result.window.start
+    && details.window.end === result.window.end;
+}
+
 export async function fetchRecommendation(signal: AbortSignal): Promise<Recommendation> {
   const response = await fetch('/api/recommendations', { signal, cache: 'no-store' });
   // An unavailable recommendation still has a useful status and explanation.
@@ -22,7 +28,7 @@ export async function fetchMatchingInsights(
     signal,
     cache: 'no-store',
   });
-  
+
   // A new forecast or window requires reloading the main recommendation first.
   if (response.status === 409) {
     return null;
@@ -32,9 +38,5 @@ export async function fetchMatchingInsights(
   }
 
   const details: Insights = await response.json();
-  if (details.forecast_version !== result.forecast_version|| details.window.start !== result.window.start || details.window.end !== result.window.end) {
-    return null;
-  }
-
-  return details;
+  return matchesForecastWindow(details, result) ? details : null;
 }

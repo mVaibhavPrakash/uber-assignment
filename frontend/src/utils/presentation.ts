@@ -34,6 +34,10 @@ export function describeHourAssessment(hour: HourEvidence, rainThreshold: number
       return 'Insufficient historical evidence';
   }
   if (!hour.forecast) return 'Forecast unavailable';
-  if (hour.forecast.rain_mm < rainThreshold) return 'Below rain threshold';
+  if (hour.forecast.rain_mm < rainThreshold) {
+    return hour.baseline_trips == null
+      ? 'Below rain threshold. Typical trips unavailable.'
+      : 'Below rain threshold';
+  }
   return 'Estimate available';
 }

@@ -1,19 +1,19 @@
-// Package domain contains storage-independent calendar rules shared by offline
-// ingestion and runtime historical lookup.
+// Package domain contains calendar and forecast rules.
 package domain
 
 import "time"
 
-// LocalCalendarFields returns the local date (encoded as a UTC date), meteorological
-// season (winter=1), ISO weekday (Monday=1) and local hour.
-func LocalCalendarFields(at time.Time, loc *time.Location) (date time.Time, season, day, hour int) {
+// NextFullHour is the UTC boundary shared by planning, forecast coverage and scheduling.
+func NextFullHour(now time.Time) time.Time {
+	return now.UTC().Truncate(time.Hour).Add(time.Hour)
+}
+
+// LocalWeekdayAndHour returns the ISO day of week (Monday=1) and local hour.
+func LocalWeekdayAndHour(at time.Time, loc *time.Location) (day, hour int) {
 	local := at.In(loc)
-	date = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
-	season = int(local.Month())%12/3 + 1
 	day = int(local.Weekday())
 	if day == 0 {
 		day = 7
 	}
-	hour = local.Hour()
-	return
+	return day, local.Hour()
 }

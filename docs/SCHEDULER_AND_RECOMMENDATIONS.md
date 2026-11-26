@@ -27,9 +27,9 @@ flowchart LR
 | Component | Responsibility | Implementation |
 |---|---|---|
 | Server | Initialize dependencies, start HTTP and the scheduler, coordinate shutdown | [cmd/server/main.go](../cmd/server/main.go) |
-| Scheduler | Decide when jobs run, apply job timeouts and record outcomes | [scheduler.go](../internal/scheduler/scheduler.go) |
+| Scheduler | Decide when jobs run, apply timeouts and log failures | [scheduler.go](../internal/scheduler/scheduler.go) |
 | Weather service | Fetch, validate, persist and publish forecasts; report their current usability | [weather/service.go](../internal/weather/service.go) |
-| Historical service | Look up aggregated evidence by zone, season, weekday and local hour | [history/service.go](../internal/history/service.go) |
+| Historical service | Look up aggregated evidence by zone, ISO day of week and New York local hour | [history/service.go](../internal/history/service.go) |
 | Recommendation service | Join evidence, invoke scoring, publish results and validate cached reads | [recommendation/service.go](../internal/recommendation/service.go) |
 | Scoring engine | Estimate trips and select an action among assessable zones without storage or network calls | [engine.go](../internal/recommendation/engine.go) and [hour.go](../internal/recommendation/hour.go) |
 | API | Prepare summaries, return hourly evidence and expose health status | [api.go](../internal/api/api.go) |
@@ -42,16 +42,16 @@ The server then creates an empty recommendation cache, starts one scheduler goro
 
 | Stored data | Owner and lifecycle |
 |---|---|
-| Job state | Scheduler loop only. Tracks weather and recommendation attempts, successes and errors; resets on restart. |
+| Job timing | The scheduler keeps the start time of each job's most recent attempt. Both timestamps begin empty at startup. |
 | Historical statistics | Loaded at startup and reused for scoring. |
 | Forecast snapshot | Weather service publishes a complete version with fetch time and hourly weather for each zone. PostgreSQL supports recovery after restart. |
 | Recommendation result | Recommendation service builds and publishes the result in memory. HTTP readers must treat its nested evidence as read-only. |
 
-Scheduler state is not the forecast or recommendation cache. `LastAttempt` records a job's start time after the job returns, including failed jobs. `LastSuccess` changes only on success. `LastError` holds an empty string or `refresh_failed`; detailed causes are logged. Empty timestamps identify jobs that have not completed an attempt since startup.
+Each job records its start time when it returns, including on failure. The scheduler uses those two timestamps to decide when work is due and sends failure details to the server log.
 
 ## Scheduling and refresh policy
 
-`Run()` calls its private `tick()` synchronously, calculates a wait, and then waits for the timer or cancellation. Each tick runs weather first if due, followed by recommendation computation if required. Jobs execute sequentially.
+`Run()` calls `tick()` and waits for the next check or cancellation. Each tick runs the weather job if due, then reads the clock again before deciding whether to compute a recommendation. This matters when fetching weather takes long enough to cross into a new planning window.
 
 Weather refresh becomes due on the first tick or when the configured interval has elapsed since the last attempt. Recommendation computation runs after a successful weather refresh, on its first attempt, at its regular refresh interval, or when `NeedsRecompute()` detects an invalid cached result.
 
@@ -108,25 +108,27 @@ Scheduler.tick()
      -> EvaluatePlanningWindow()
         -> estimateAreaWindow()
            -> estimateHourTrips()
-        -> selectScopeDecision()
+        -> chooseRecommendation()
+           -> compareZones()
      -> publishRecommendation()
         -> attach forecast version and expiry
         -> atomically publish the completed result
 ```
 
-`CurrentForecast()` reads cached weather and checks its age and window coverage; it does not call the provider. A forecast snapshot contains its version, fetch time and hourly rain, snowfall and precipitation probability, normally 600 records for 20 zones over 30 hours.
+`CurrentForecast()` reads cached weather and checks its age and window coverage. A forecast snapshot contains its version, fetch time and hourly rain, snowfall and precipitation probability, normally 600 records for 20 zones over 30 hours. Forecast coverage, recommendation windows and scheduler wake-ups use the same next-hour calculation.
 
-`joinForecastAndHistory()` matches each zone/hour with historical statistics for the same season, weekday and New York local hour. The engine then applies the following rules:
+`joinForecastAndHistory()` matches each forecast hour to the same zone, exact day of the week and New York local hour. A Thursday at 1 PM uses past Thursdays at 1 PM across all seasons. SQL uses the stored `day_of_week` and `hour_of_day`. The lookup derives those fields from the forecast timestamp in New York time, using ISO numbering from Monday (1) through Sunday (7).
 
-- Rainfall below the configured threshold, including light rain, uses the below-threshold historical comparison and contributes zero modeled additional trips.
-- Rainfall at or above the threshold uses `(rainy mean - below-threshold mean) * precipitation probability / 100`.
-- A below-threshold hour requires enough baseline observations; a qualifying rainy hour requires both classes. Defaults are five observations per relevant class and 0.5 mm/hour.
-- Snow, missing forecasts and insufficient historical evidence prevent assessment of the affected hour. A zone receives totals only if every planning-window hour is assessable.
+Hourly API evidence includes `day_of_week` and `local_hour`. The evidence panel shows the hour, historical dry and rainy averages, their sample counts, and the forecast. The engine applies the following rules:
+
+- A usable, snow-free forecast below the rain threshold contributes zero modeled additional trips. With too little dry history, the baseline and total expected trips stay unknown.
+- At or above the threshold, both historical groups need enough samples before the engine applies `(rainy mean - below-threshold mean) * precipitation probability / 100`. Defaults are five observations per class and 0.5 mm/hour.
+- Missing or invalid forecasts, snow, and qualifying rain with insufficient history leave hourly impact unknown. Every hour must have a known rain impact for a zone to be assessed. Full-window typical and expected trip totals also require every hourly baseline.
 - Signed changes are summed across the window. The highest assessed total qualifies when it reaches 50 additional trips per hour of window duration, or 100 over the default two hours. Ties use the smaller zone ID.
 
 Illustrative inputs of 1,200 typical trips, 1,700 rainy trips and 90% precipitation probability produce 450 additional trips for a qualifying rainy hour. A following below-threshold hour adds zero. This is a modeled association in completed trip activity, not evidence of a driver shortage or a driver count to move.
 
-Incomplete zones do not veto an eligible zone. Recommendations identify the highest estimate among assessed zones and report assessed/total coverage, with a warning that excluded zones may have higher impact. With partial coverage, no qualifying assessed zone does not imply normal operations across the full monitored scope.
+Recommendations identify the highest qualifying estimate among assessed zones and report assessed/total coverage, with a warning that excluded zones may have higher impact. Partial coverage without a qualifying zone returns `insufficient_evidence`. With full coverage, an entirely below-threshold forecast returns `no_intervention` with reason `no_significant_rainfall`.
 
 ## Request handling and consistency
 
@@ -183,4 +185,4 @@ The implementation assumes one application instance. Multiple replicas would req
 
 The separate [rain demo](../tools/rain-demo/main.go) supplies fictional inputs to the same scoring engine and API handlers. It computes on request without the scheduler, database or provider. Its API/UI ports are 8081/3001, separate from the normal 8080/3000 application. It demonstrates calculation and presentation rather than the production refresh lifecycle.
 
-Four focused tests cover assessed-zone recommendations, light rain without intervention, historical SQL comparisons and retaining usable forecasts during a provider outage while rejecting expired weather. See [recommendation tests](../tests/recommendation_test.go), [historical SQL test](../tests/historical_test.go) and [weather failure test](../tests/weather_test.go). Broader concurrency and response-shaping checks are outside the retained test suite.
+Three tests cover the evidence and decision path. The SQL test checks the historical comparison, the recommendation test checks an actionable zone with partial coverage, and the weather test checks forecast reuse and expiry during an outage. [SQL evidence](../tests/historical_test.go) · [Recommendation](../tests/recommendation_test.go) · [Provider outage](../tests/weather_test.go)

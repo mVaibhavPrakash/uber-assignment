@@ -2,14 +2,14 @@ package api
 
 import (
 	"encoding/json"
-	"mobilitycontrolroom/internal/appErrors"
-
-	"mobilitycontrolroom/internal/recommendation"
-	"mobilitycontrolroom/internal/repository"
 	"net/http"
 	"slices"
 	"strconv"
 	"time"
+
+	"mobilitycontrolroom/internal/appErrors"
+	"mobilitycontrolroom/internal/recommendation"
+	"mobilitycontrolroom/internal/repository"
 )
 
 type Service interface {
@@ -82,7 +82,16 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, area := range result.Areas {
 		if area.Area.ID == id {
-			writeJSON(w, 200, map[string]any{"forecast_version": result.ForecastVersion, "forecast_fetched_at": result.ForecastFetchedAt, "generated_at": result.GeneratedAt, "valid_until": result.ValidUntil, "window": result.Window, "freshness": result.Freshness, "evidence": area, "warnings": warningsWithForecastFreshness(result)})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"forecast_version":    result.ForecastVersion,
+				"forecast_fetched_at": result.ForecastFetchedAt,
+				"generated_at":        result.GeneratedAt,
+				"valid_until":         result.ValidUntil,
+				"window":              result.Window,
+				"freshness":           result.Freshness,
+				"evidence":            area,
+				"warnings":            warningsWithForecastFreshness(result),
+			})
 			return
 		}
 	}

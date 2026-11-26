@@ -5,12 +5,13 @@ package recommendation
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/config"
 	"mobilitycontrolroom/internal/repository"
 	"mobilitycontrolroom/internal/weather"
-	"sync/atomic"
-	"time"
 )
 
 // Supplies the zones and historical statistics loaded from PostgreSQL.
@@ -35,7 +36,13 @@ type Manager struct {
 
 // Connects historical evidence, weather and the configured scoring rules.
 func NewManager(h HistoricalEvidence, w ForecastEvidence, c config.Config) (*Manager, error) {
-	o := Options{Window: c.GetWindow(), MinSamples: int64(c.GetMinHistoricalSamples()), RainThreshold: c.GetMinRainfallMM(), AdditionalPerHour: c.GetMinAdditionalTripsPerHour(), Location: c.GetLocation()}
+	o := Options{
+		Window:            c.GetWindow(),
+		MinSamples:        int64(c.GetMinHistoricalSamples()),
+		RainThreshold:     c.GetMinRainfallMM(),
+		AdditionalPerHour: c.GetMinAdditionalTripsPerHour(),
+		Location:          c.GetLocation(),
+	}
 	if err := o.Validate(); err != nil {
 		return nil, err
 	}
@@ -140,7 +147,6 @@ func (s *Manager) joinForecastAndHistory(ctx context.Context, hours []repository
 	}
 
 	// Leave missing inputs empty so scoring can explain the missing evidence.
-
 	inputs := make([]AreaInput, 0, len(scope))
 	for _, area := range scope {
 		input := AreaInput{Area: area}

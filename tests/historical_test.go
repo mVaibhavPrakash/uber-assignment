@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"mobilitycontrolroom/database/migrations"
+	"mobilitycontrolroom/internal/history"
 	"mobilitycontrolroom/internal/repository"
 	"mobilitycontrolroom/internal/repository/postgres"
 	"os"
@@ -53,25 +54,53 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = pool.Exec(ctx, `INSERT INTO community_areas VALUES(7,'Astoria',40.7615,-73.9239);
-							INSERT INTO historical_observations(area_id,hour_start,local_date,day_of_week,season,hour_of_day,trip_count,rain_mm,snowfall_cm) VALUES
-							(7,'2022-12-03 15:00Z','2022-12-03',6,1,10,1100,0,0),
-							(7,'2022-12-10 15:00Z','2022-12-10',6,1,10,1300,0,0),
-							(7,'2023-01-07 15:00Z','2023-01-07',6,1,10,1500,1,0),
-							(7,'2023-02-04 15:00Z','2023-02-04',6,1,10,1900,0.5,0),
-							(7,'2022-12-17 15:00Z','2022-12-17',6,1,10,9000,1,1),
-							(7,'2022-12-24 15:00Z','2022-12-24',6,1,10,1200,0.1,0),
-							(7,'2022-12-31 15:00Z','2022-12-31',6,1,10,1200,0.4,0);`)
+		INSERT INTO historical_observations(area_id,hour_start,local_date,day_of_week,hour_of_day,trip_count,rain_mm,snowfall_cm) VALUES
+		(7,'2022-12-03 15:00Z','2022-12-03',6,10,1100,0,0),
+		(7,'2023-04-08 14:00Z','2023-04-08',6,10,1300,0,0),
+		(7,'2023-01-07 15:00Z','2023-01-07',6,10,1500,1,0),
+		(7,'2023-08-05 14:00Z','2023-08-05',6,10,1900,0.5,0),
+		(7,'2022-12-17 15:00Z','2022-12-17',6,10,9000,1,1),
+		(7,'2022-12-24 15:00Z','2022-12-24',6,10,1200,0.1,0),
+		(7,'2022-12-31 15:00Z','2022-12-31',6,10,1200,0.4,0),
+		(7,'2023-04-10 14:00Z','2023-04-10',1,10,600,0,0),
+		(7,'2023-04-08 15:00Z','2023-04-08',6,11,900,0,0);`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := postgres.New(pool).AggregateHourly(ctx, repository.HistoricalQuery{MinRainfallMM: 0.5})
+	loc, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected one comparable group, got %d", len(rows))
+	adapter := postgres.New(pool)
+	evidence, err := history.Load(ctx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: 0.5}, loc)
+	if err != nil {
+		t.Fatal(err)
 	}
-	stats := rows[0]
+	if groups := evidence.Coverage(2).Groups; groups != 3 {
+		t.Fatalf("expected three day and hour groups across all seasons, got %d", groups)
+	}
+	winter := time.Date(2023, time.February, 11, 10, 0, 0, 0, loc)
+	summer := time.Date(2023, time.August, 12, 10, 0, 0, 0, loc)
+	for _, at := range []time.Time{winter.UTC(), summer.UTC()} {
+		stats, ok := evidence.LookupComparableHour(7, at)
+		if !ok {
+			t.Fatalf("no pooled history for %s", at)
+		}
+		assertHistoricalComparison(t, stats)
+	}
+	for _, check := range []struct {
+		at   time.Time
+		mean float64
+	}{{summer.AddDate(0, 0, 2), 600}, {summer.Add(time.Hour), 900}} {
+		stats, ok := evidence.LookupComparableHour(7, check.at.UTC())
+		if !ok || stats.DrySamples != 1 || stats.DryMean == nil || *stats.DryMean != check.mean || stats.RainSamples != 0 {
+			t.Fatalf("wrong day or hour selected for %s: %+v", check.at, stats)
+		}
+	}
+}
+
+func assertHistoricalComparison(t *testing.T, stats repository.HourlyStats) {
+	t.Helper()
 	if stats.DrySamples != 4 || stats.RainSamples != 2 {
 		t.Fatalf("baseline must include light rain; qualifying rain stays separate and snow excluded: %+v", stats)
 	}

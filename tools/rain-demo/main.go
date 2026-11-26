@@ -41,7 +41,7 @@ func (s rainScenario) CurrentRecommendation(now time.Time) recommendation.Result
 	input := recommendation.AreaInput{Area: s.Areas()[0]}
 	for index, dry := range []float64{1200, 1400} {
 		at := window.Start.Add(time.Duration(index) * time.Hour)
-		_, season, day, hour := domain.LocalCalendarFields(at, s.options.Location)
+		day, hour := domain.LocalWeekdayAndHour(at, s.options.Location)
 		rain, rainMM := 1700.0, 1.0
 		if index == 1 {
 			rainMM = 0
@@ -50,7 +50,7 @@ func (s rainScenario) CurrentRecommendation(now time.Time) recommendation.Result
 			At:       at,
 			Forecast: &repository.ForecastHour{AreaID: 7, HourStart: at, RainMM: rainMM, PrecipitationProbability: 90},
 			History: &repository.HourlyStats{
-				AreaID: 7, Season: season, DayOfWeek: day, HourOfDay: hour,
+				AreaID: 7, DayOfWeek: day, HourOfDay: hour,
 				DryMean: &dry, RainMean: &rain, DrySamples: 5, RainSamples: 5,
 			},
 		})

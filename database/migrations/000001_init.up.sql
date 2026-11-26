@@ -10,7 +10,6 @@ CREATE TABLE historical_observations (
     hour_start TIMESTAMPTZ NOT NULL,
     local_date DATE NOT NULL,
     day_of_week SMALLINT NOT NULL,
-    season SMALLINT NOT NULL,
     hour_of_day SMALLINT NOT NULL,
     trip_count INTEGER NOT NULL,
     rain_mm REAL NOT NULL,

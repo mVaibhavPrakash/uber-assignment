@@ -13,18 +13,28 @@ export function ForecastBadge({ freshness }: { freshness: string }) {
   );
 }
 
+function decisionTitle(result: Recommendation): string {
+  switch (result.status) {
+    case "action_required":
+      return result.primary_recommendation
+        ? `Review driver availability in ${formatAreaName(result.primary_recommendation.area.name)}`
+        : "Recommendation unavailable";
+    case "no_intervention":
+      return result.decision_reason === "no_significant_rainfall"
+        ? "No rain-related action needed"
+        : "No zone reaches the intervention threshold";
+    case "insufficient_evidence":
+      return "Insufficient evidence to recommend an action";
+    default:
+      return "Recommendation unavailable";
+  }
+}
+
 export default function DecisionCard({ result }: { result: Recommendation }) {
   const action = result.status === "action_required";
   const primary = action ? result.primary_recommendation : null;
   const normal = result.status === "no_intervention";
   const partial = result.coverage.assessed < result.coverage.total;
-  const title = primary
-    ? `Review driver availability in ${formatAreaName(primary.area.name)}`
-    : normal
-      ? partial ? "No assessed zone reaches the intervention threshold" : "Continue normal operations"
-      : result.status === "insufficient_evidence"
-        ? "Insufficient evidence to recommend an action"
-        : "Recommendation unavailable";
   const instruction = primary
     ? `Review driver availability in ${primary.area.name}. `
     : "";
@@ -47,7 +57,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
           <p className="eyebrow">
             {normal || action ? "Recommended action" : "Decision status"}
           </p>
-          <h2 id="decision-title">{title}</h2>
+          <h2 id="decision-title">{decisionTitle(result)}</h2>
         </div>
       </div>
       <p className="decision-explanation">{explanation}</p>

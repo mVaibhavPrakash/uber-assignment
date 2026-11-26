@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mobilitycontrolroom/internal/appErrors"
+	"sync"
+	"time"
 
+	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/cache"
 	"mobilitycontrolroom/internal/config"
 	"mobilitycontrolroom/internal/domain"
 	"mobilitycontrolroom/internal/repository"
-	"sync"
-	"time"
 )
 
 type Provider interface {
@@ -46,19 +46,12 @@ func (s *Service) RestoreSavedForecast(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("restore forecast scope: %w", err)
 	}
-	snapshot, err := s.forecasts.LoadLatest(ctx)
+	_, err = s.loadSavedForecast(ctx, areas)
 	if errors.Is(err, appErrors.ErrNoSnapshot) {
 		s.store.Clear()
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("restore forecast snapshot: %w", err)
-	}
-	if err = domain.ValidateForecast(snapshot, areas); err != nil {
-		return err
-	}
-	s.store.Set(snapshot)
-	return nil
+	return err
 }
 
 func (s *Service) FetchAndPublishForecast(ctx context.Context) error {
@@ -80,8 +73,7 @@ func (s *Service) FetchAndPublishForecast(ctx context.Context) error {
 	}
 	if err = s.forecasts.ReplaceSnapshot(ctx, snapshot); err != nil {
 		if errors.Is(err, appErrors.ErrCommitAmbiguous) {
-			return appErrors.ReloadAfterUncertainForecastCommit(ctx, s.config.GetDBTimeout(), snapshot.Version, err,
-				func(ctx context.Context) (string, error) { return s.reloadAndPublishSavedForecast(ctx, areas) }, s.store.Clear)
+			return s.reconcileForecastCommit(ctx, areas, snapshot.Version, err)
 		}
 		return err
 	}
@@ -103,7 +95,7 @@ func (s *Service) CurrentForecast(now time.Time) (View, error) {
 		return view, appErrors.ErrForecastExpired
 	}
 
-	start := now.UTC().Truncate(time.Hour).Add(time.Hour)
+	start := domain.NextFullHour(now)
 	end := start.Add(s.config.GetWindow())
 	first, last := coveredHourRange(snapshot.Hours)
 	if first.After(start) || last.Before(end.Add(-time.Hour)) {
@@ -133,15 +125,30 @@ func coveredHourRange(hours []repository.ForecastHour) (time.Time, time.Time) {
 	return first, last
 }
 
-// Reads and publishes the saved snapshot after an uncertain commit.
-func (s *Service) reloadAndPublishSavedForecast(ctx context.Context, areas []repository.Area) (string, error) {
+// Startup and commit recovery both publish the version PostgreSQL actually holds.
+func (s *Service) loadSavedForecast(ctx context.Context, areas []repository.Area) (string, error) {
 	snapshot, err := s.forecasts.LoadLatest(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load saved forecast: %w", err)
 	}
 	if err := domain.ValidateForecast(snapshot, areas); err != nil {
 		return "", err
 	}
 	s.store.Set(snapshot)
 	return snapshot.Version, nil
+}
+
+func (s *Service) reconcileForecastCommit(ctx context.Context, areas []repository.Area, attemptedVersion string, commitErr error) error {
+	// The write may have committed even if its context expired. Give the read its own deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.config.GetDBTimeout())
+	defer cancel()
+	savedVersion, err := s.loadSavedForecast(ctx, areas)
+	if err != nil {
+		s.store.Clear()
+		return errors.Join(commitErr, fmt.Errorf("reconcile forecast commit: %w", err))
+	}
+	if savedVersion == attemptedVersion {
+		return nil
+	}
+	return commitErr
 }

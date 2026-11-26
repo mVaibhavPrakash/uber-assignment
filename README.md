@@ -2,33 +2,44 @@
 
 A weather-informed mobility dashboard for 20 selected NYC taxi zones. It shows one action to review driver availability, or explains why no intervention is recommended. Completed trips measure activity, not unmet demand or driver supply.
 
-Recommendations rank zones with complete evidence for the planning window. Incomplete zones do not block an otherwise eligible action: the UI shows assessed/total coverage and warns that excluded zones may have higher impact. With partial coverage, no qualifying result means no assessed zone reaches the threshold, not that all monitored zones are clear.
+Recommendations rank zones with a known rain impact for every hour in the planning window. The UI shows assessed/total coverage and warns that excluded zones may have higher impact. Partial coverage with no qualifying action produces an insufficient-evidence decision.
 
-Rain below the configured threshold (default 0.5 mm/hour), including light rain, uses the historical below-threshold comparison and contributes zero modeled extra trips. At or above the threshold, the engine applies the rainy-versus-below-threshold comparison. The UI calls the comparison "Typical dry-weather trips" and explains the light-rain inclusion in a tooltip. Restart/rebuild the API after this change to refresh its historical statistics; reseeding is unnecessary.
+With a usable, snow-free forecast, rain below the configured threshold (default 0.5 mm/hour) contributes zero modeled extra trips. Typical and expected trip totals require dry historical evidence and may be unavailable. At or above the threshold, the engine requires sufficient dry and rainy samples. If every zone stays below the threshold, the dashboard recommends no rain-related action.
+
+Historical samples are grouped by zone, exact ISO day of week, and New York local hour across all seasons. A Thursday at 1 PM uses historical Thursdays at 1 PM in the same zone. The startup log reports 3,360 groups (20 zones × 7 days × 24 hours) drawn from 697,440 hourly observations.
+
+## Follow one recommendation
+
+1. At startup, PostgreSQL calculates the dry and rainy trip averages and sample counts for each group. [Historical query](internal/repository/postgres/historical.sql)
+2. On a scheduler tick, `ComputeAndPublish` reads the cached forecast and matches each upcoming hour to its historical group. [Recommendation manager](internal/recommendation/service.go)
+3. `estimateHourTrips` decides whether the hour has zero, estimated, or unknown rain impact. [Hourly rules](internal/recommendation/hour.go)
+4. The engine adds up each zone’s hourly estimates, checks coverage, and selects the decision. The API serves that published result to the dashboard. [Zone ranking and decision](internal/recommendation/engine.go)
 
 ## Run
 
-Copy `.env.example` to `.env` before starting. The example includes credentials for the local assignment database and uses the Compose host `db`. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. The `.env` file is ignored by Git.
+Copy `.env.example` to `.env` before starting. Docker's API and setup containers read `DATABASE_URL` from this file. Keep its host and port at `db:5432` for the bundled PostgreSQL service. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. Git ignores `.env`.
 
 From a Git clone of the repository with Docker Compose available. Prepared CSV files are included in regular Git; Git LFS and historical downloads are not required for setup:
 
 ```sh
 docker compose run --rm setup
-docker compose up --build api frontend
+docker compose up -d --build api frontend
 ```
 
-Open http://localhost:3000. The API is at http://localhost:8080/api/recommendations. Setup refuses nonempty or partial assignment tables by default; normal startup never resets data. To intentionally reload the sample dataset, stop the API and other database clients, then run `docker compose run --rm -e RESET_SEED=true setup`. **Reset recreates the three assignment tables in `mobility_control_room` and erases their contents.** It does not drop the database or force clients off it.
+Open http://localhost:3000. The API is at http://localhost:8080/api/recommendations. Setup loads empty assignment tables and upgrades an older database by removing its derived season column. Running it again verifies that zones and history match the bundled CSVs, prints `Database already initialized; skipping seed.`, and exits successfully. Existing weather forecasts are preserved. Partial tables or different seed data still cause an error; normal startup never resets data.
+
+To intentionally reload the sample dataset, stop the API and other database clients, then run `docker compose run --rm -e RESET_SEED=true setup`. **Reset recreates the three assignment tables in `mobility_control_room` and erases their contents.** It does not drop the database or force clients off it.
 
 After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check Docker, Compose configuration, the served frontend and the API through Nginx. The check never resets data. It reports a weather-related HTTP 503 for review rather than treating it as a normal recommendation. The API image contains neither seed data nor a seed executable. The separate setup service uses PostgreSQL's `psql` client and reads CSV files through read-only mounts.
 
-For local development, use Go 1.25+, PostgreSQL 17+, its `psql` client, and Node.js 22. Configure environment variables using [.env.example](.env.example), using your local database host instead of `db`. The dedicated `mobility_control_room` database must already exist. Go requires `DATABASE_URL` in the process environment and does not load `.env` itself. Compose reads `.env` or exported environment variables and rejects missing database settings.
+For local development, use Go 1.25+, PostgreSQL 17+, its `psql` client, and Node.js 22. Set `DATABASE_URL` in your terminal using the format in [.env.example](.env.example) and the host and port of your local PostgreSQL installation. The dedicated `mobility_control_room` database must already exist. Go reads its configuration from the process environment.
 
 ```sh
 psql "$DATABASE_URL" -X -f database/seed.psql
 go run ./cmd/server
 ```
 
-The example above uses Git Bash. In PowerShell, use `psql $env:DATABASE_URL -X -f database/seed.psql`. Run setup only for empty assignment tables. For an intentional reset, add `-v reset=true` before `-f`; this requires other clients to be stopped. Both imports and any schema changes are committed together, and import failures roll them back. In another terminal:
+The example above uses Git Bash. In PowerShell, use `psql $env:DATABASE_URL -X -f database/seed.psql`. The same command works for first-time setup and an already initialized database. For an intentional reset, add `-v reset=true` before `-f`; this requires other clients to be stopped. Both imports and any schema changes are committed together, and import failures roll them back. In another terminal:
 
 ```sh
 cd frontend
@@ -49,9 +60,9 @@ docker compose up -d db
 docker compose stop api
 ```
 
-For an already seeded database, do not run setup again. For a first-time empty database, use the setup command in the Run section before starting the local backend. The default setup does not reset existing data.
+Use the setup command in the Run section before starting the local backend if the database has not been initialized. Repeating it is safe: matching zones and history are verified and left unchanged.
 
-In PowerShell, read the connection URL from `.env` and change only the host and port for this terminal:
+In PowerShell, set the terminal's connection URL to use `127.0.0.1:15432`. This lets terminal Go reach PostgreSQL through the published port, while Docker setup and the containerized API keep using the URL in `.env`.
 
 ```powershell
 $databaseSetting = Get-Content .env | Where-Object { $_.StartsWith('DATABASE_URL=') }
@@ -110,7 +121,7 @@ Stop the two sample processes with Ctrl+C when finished. The normal application 
 
 React/TypeScript is served by Nginx, which proxies API requests to Go. The Go application loads historical SQL statistics from PostgreSQL, periodically fetches and persists Open-Meteo forecasts, and computes one current recommendation. A one-shot setup container loads the prepared seed; no historical downloads are required at startup.
 
-Each completed recommendation is published atomically and then treated as read-only. API handlers prepare summaries without changing cached hourly evidence; readers do not deep-copy the full recommendation. Version, window and expiry checks still run on every read.
+Follow the main flow from [server startup](cmd/server/main.go) to the [scheduler](internal/scheduler/scheduler.go), which fetches weather when due and then starts scoring. The [recommendation manager](internal/recommendation/service.go) joins cached forecasts with historical trip statistics, calls the pure scorer and publishes a complete result. The [HTTP handlers](internal/api/api.go) serve that result and its hourly evidence after checking its forecast version, planning window and expiry.
 
 See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#architecture), [data and scoring](DESIGN_AND_SCALABILITY.md#data-and-decisions), and [database design and SQL](DESIGN_AND_SCALABILITY.md#database-design-and-important-sql) for the detailed flow, endpoints and implementation.
 
@@ -125,10 +136,10 @@ See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#archit
 | Prepared public dataset and offline preparation boundary | [data/README.md](data/README.md) |
 | Executable schema and SQL | [migrations](database/migrations/), [historical aggregation](internal/repository/postgres/historical.sql) |
 | Dependencies and configuration | [go.mod](go.mod), [go.sum](go.sum), [frontend/package.json](frontend/package.json), [lockfile](frontend/package-lock.json), [.env.example](.env.example), [compose.yaml](compose.yaml) |
-| Four focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [external API failure](tests/weather_test.go) |
+| Three focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [external API failure](tests/weather_test.go) |
 | Working product demonstration | Screenshots below; the two Docker commands above run the application locally. |
 
-Repository publication/access verification remains a submission step; no remote URL is currently configured. A hosted deployment is optional and is not supplied here.
+Reviewers can run the application locally using the Docker commands above.
 
 ## Screenshots
 
@@ -153,4 +164,4 @@ npm run build --prefix frontend
 
 Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include SQL verification. That test creates/removes its own temporary schema and skips without the variable. Docker setup was also verified from a clean copy with no local dependencies/build artifacts and a new database volume.
 
-The suite contains exactly four tests: a qualifying recommendation with partial coverage, light rain without intervention, historical SQL comparisons, and retaining usable forecasts during an outage while rejecting expired forecasts. There are no nested scenario matrices or cache/serialization test suites.
+The recommendation test checks that a zone with 450 modeled extra trips can trigger an action when another zone has too few rainy observations. The SQL test checks how those historical averages are built. The weather test checks how long a saved forecast remains usable during a provider outage.

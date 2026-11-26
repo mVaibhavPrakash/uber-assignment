@@ -48,7 +48,7 @@ I also separated preparation from reviewer setup. Downloading, aggregation, chec
 
 I challenged both exact calendar dates and all-year weekday/hour averages. Exact dates offer few comparable observations across years, while all-year groups mix seasons. Monthly groups, rolling calendar windows and adaptive fallback were explored as alternatives.
 
-AI proposed rolling seasonal windows with bounded fallback. I questioned whether widening the window to gain only a few rainy observations justified the extra rules, whether those observations remained comparable, and how the fallback would be explained. I chose fixed meteorological seasons, the same weekday and local hour, and one reusable startup aggregation. All seven weekdays remain separate, including Saturday and Sunday; the field was clarified as `day_of_week` with ISO numbering.
+AI proposed rolling seasonal windows with bounded fallback. I questioned whether widening the window to gain only a few rainy observations justified the extra rules, whether those observations remained comparable, and how the fallback would be explained. I initially chose fixed meteorological seasons, the same day of the week and local hour, and one reusable startup aggregation. That approach treated the seven days separately using ISO `day_of_week` numbering.
 
 Weights for rainy versus dry hours and temporal decay were also discussed. I deferred them and retained signed additional trips, so a decrease in one hour offsets an increase in another. The horizon remains configurable in whole hours. More trip records within an hour do not create more independent rainy-hour observations.
 
@@ -62,7 +62,7 @@ A live Open-Meteo check validated 600 forecast rows across the selected 20 zones
 
 The weather fields also needed interval alignment. Provider rain, snow and probability values label the preceding hour, so the parser assigns them to the interval starting one hour earlier. Forecast persistence was kept transactional, with publication only after a complete save. Uncertain commit outcomes trigger a reload rather than repeating the write blindly.
 
-Earlier verification covered rollback, retained forecasts on failures, cancellation, Retry-After, invalid responses and cache ownership. Some of those checks were later removed from the retained suite, and preparation-only worker/quota machinery was removed from the runtime. The current defaults and four-test scope are described below.
+Earlier verification covered rollback, retained forecasts on failures, cancellation, Retry-After, invalid responses and cache ownership. Some of those checks were later removed from the retained suite, and preparation-only worker/quota machinery was removed from the runtime. The current defaults and test scope are described below.
 
 ### AI suggestions and my decisions
 
@@ -92,7 +92,14 @@ I chose Go for offline preparation and editable zone metadata rather than Python
 
 ## Historical comparison and scoring
 
-I selected fixed meteorological seasons with the same zone, weekday and New York local hour. Exact dates provide very few observations across years; all-year groups mix seasonal patterns, and monthly or adaptive windows add sparsity or fallback decisions. The chosen grouping is explainable and reusable, but I have not established that it outperforms those alternatives.
+I initially selected fixed meteorological seasons with the same zone, exact day of week and New York local hour. A later rainy window had usable forecasts for all 20 zones, but none had enough historical rainy samples for both hours. A read-only PostgreSQL comparison found that 28.42% of exact-day groups met the minimum, compared with 93.07% for weekday/weekend groups and 100% for groups that pool all days within a season and hour.
+
+I chose to pool all seven days within each zone, season and local hour. Both broader groupings covered 20 of 20 zones in the rainy example, so one group per season and hour was simpler to explain and gave more samples. This can hide commute and weekend patterns. The comparison measured evidence coverage, while predictive accuracy remains untested.
+
+I later checked whether the history actually showed differences by day before switching to exact ISO day and local hour across all seasons. At 8 AM, dry-weather trips per zone averaged 244–256 from Monday through Friday, 158 on Saturday and 136 on Sunday. At 6 PM, the average rose from 266 on Monday to 326 on Friday. All 20 zones contributed to each comparison. The full set of averages and coverage figures is in [the implementation plan](plan.md).
+
+I kept `day_of_week` in the stored observations, the history cache key and the hourly API evidence. The forecast timestamp is converted to New York time before lookup, so a Thursday at 1 PM matches past Thursdays at 1 PM in the same zone. The hourly panel displays the time and explains that comparison in its caption. I removed `season` from the lookup and API evidence. Once the lookup and evidence used the same weekly key, I removed the derived season field from the CSV and database. Keeping the original timestamp and local date preserves each observation for future comparisons.
+I replayed the same saved 1–3 PM New York forecast with both groupings. Both assessed all 20 zones. With the previous season-and-hour grouping, Williamsburg North Side led with 215.94 modeled additional trips. Under the final exact-day grouping, Williamsburg dropped to 75.22, and Upper East Side North led with 97.93. The rainy-minus-dry averages were smaller under the final grouping for those hours. Rainfall and precipitation probabilities stayed the same, and the highest modeled increase was below the same 100-trip threshold. The wording now makes clear that significant rain is forecast and the estimate is below the threshold. The replay explains the decision change, while predictive accuracy remains untested.
 
 PostgreSQL calculates historical means, counts, rainy-hour dispersion and signed differences. Go checks eligibility, applies forecast probability, aggregates the planning window and ranks zones. Keeping these responsibilities separate makes the calculation traceable and keeps the scoring engine independent of SQL and HTTP clients.
 
@@ -140,7 +147,7 @@ I then narrowed configuration validation to presence and type conversion. Explic
 
 After making the recommendation manager's steps explicit, I reviewed the supporting packages for reductions that would not obscure that flow. PostgreSQL area and historical queries now share one row collector for iteration, cleanup and scan/read errors. The single-caller transaction-start wrapper was inlined into forecast replacement, preserving its error context and rollback handling. Unused historical query-plan and cache-length methods were removed after checking their callers. Configuration connection checks and weather fetching no longer pass through forwarding-only helpers, and the numeric environment parser was renamed to describe its actual return value.
 
-The cleanup also simplified zone membership checks, historical cache misses and forecast badge formatting. Recommendation calculation, scheduler timing, retry policy, forecast validation, transaction boundaries and cache ownership were retained. Temporary before/after checks matched 2,000 configuration cases, 48 API cases, weather request/response handling, historical cache ownership, PostgreSQL reads/writes and rendered UI markup. All four retained tests, including the PostgreSQL integration test, plus Go vet/build and the frontend build passed. These comparisons remain local refactor checks rather than additions to the retained suite.
+The cleanup also simplified zone membership checks, historical cache misses and forecast badge formatting. Recommendation calculation, scheduler timing, retry policy, forecast validation, transaction boundaries and cache ownership were retained. Temporary before/after checks matched 2,000 configuration cases, 48 API cases, weather request/response handling, historical cache ownership, PostgreSQL reads/writes and rendered UI markup. All four tests at that stage, including the PostgreSQL integration test, plus Go vet/build and the frontend build passed. These comparisons remain local refactor checks rather than additions to the retained suite.
 
 I then made the call order explicit because fewer lines alone did not make the recommendation path easy to follow. The coordinator is named `Manager`, and `ComputeAndPublish()` reads as four numbered steps: cached weather, cached historical evidence, scoring, and publication. The existing publication policy moved into `publishRecommendation()`. This is a Go struct with methods rather than an additional framework or generic pipeline. The scheduler still performs live weather fetching separately; API requests still only read the saved result. The scoring engine also labels its three stages: validate, estimate zones, and select a decision.
 
@@ -148,12 +155,11 @@ I revisited the recommendation package to reduce helper calls and repeated selec
 
 For this refactor, a temporary comparison against the original package matched 2,000 generated scoring cases at full precision and in serialized JSON, including messages and errors. Additional comparisons checked empty caches, version changes, freshness, expiry, weather failures and cancellation. These were local refactor checks, not additional retained tests or forecast-accuracy validation.
 
-The initial plan called for three focused top-level tests. As features were refined, the recommendation test accumulated nested cases for eligibility, serialization, cache ownership, concurrent reads and expiry. Keeping three top-level names did not keep the actual suite small. I requested a reduction to four explicit tests that directly affect the recommendation:
+The initial plan called for three focused top-level tests. As features were refined, the recommendation test accumulated nested cases for eligibility, serialization, cache ownership, concurrent reads and expiry. Keeping three top-level names did not keep the actual suite small. I first narrowed the suite to four tests. For the final submission I kept one scenario each for the decision, its SQL inputs and a weather outage. The decision test uses one rainy hour and one dry hour with no baseline.
 
 | Test | Decision it protects |
 |---|---|
 | Assessed-zone ranking | A zone with insufficient rainy samples neither blocks nor outranks an eligible zone; the result reports partial coverage and the expected trip calculation. |
-| Light rain | Below-threshold rainfall remains assessable with baseline history and does not trigger an intervention. |
 | Historical SQL | PostgreSQL groups below-threshold and qualifying rain correctly, excludes snow and returns the expected historical comparison. |
 | Provider failure | Bounded retries preserve a usable prior forecast, while expired weather is rejected. |
 
@@ -175,9 +181,29 @@ I questioned the amount of Go seeding code needed for an already-prepared datase
 
 The JSON was converted once to `areas.csv` and `historical_observations.csv`. All 697,440 observation records passed a CSV round-trip hash comparison of every imported field. The prepared data shrank from about 230 MB of JSON to 46 MB of CSV and now fits in regular Git. The original JSON remains in an ignored local archive; it is not included alongside the new seed.
 
-I replaced the Go seed command and package with `database/seed.psql`, run by the PostgreSQL client image. It checks the dedicated database/schema, serializes setup with a transaction advisory lock, refuses existing data by default, applies the migration when needed and imports both files in one transaction. CSV headers must match the expected columns, null measurements use an explicit marker, and malformed imports fail rather than silently skip rows. The API image now contains only the application, not seed files or a seed executable.
+I replaced the Go seed command and package with `database/seed.psql`, run by the PostgreSQL client image. The first version checked the dedicated database/schema, serialized setup with a transaction advisory lock, refused existing data by default, applied the migration when needed and imported both files in one transaction. CSV headers must match the expected columns, null measurements use an explicit marker, and malformed imports fail rather than silently skip rows. The API image now contains only the application, not seed files or a seed executable.
 
 Reset remains explicit but now recreates the three assignment tables inside the import transaction instead of dropping the database. It refuses other connected clients. This allows failed reset/import attempts to roll back the prior tables and data together. It also makes setup intentionally PostgreSQL-specific. Recommendation scoring, historical grouping and forecast behavior are unchanged.
+
+### Making repeated reviewer setup succeed
+
+After the CSV conversion, rerunning the documented setup command failed because the database already contained data. That protected the existing dataset, but made a normal reviewer action look like a broken installation. I changed setup to load empty tables, report a successful skip when the expected zones and history are already present, and reject partial or different data. Reset still requires an explicit choice.
+
+I chose to compare the stored data with temporary copies of the bundled CSVs, including every field, null and duplicate count. Checking row counts alone could accept different observations, while a new seed marker would not identify databases initialized by the earlier script. This also lets those existing installations use the same command without a reset. Weather forecasts are excluded from the seed comparison because the running application updates them; a repeat setup preserves them.
+
+The extra cost is loading and comparing the CSVs on repeat setup, rather than immediately returning from a marker check. Verification permits API reads but pauses writes to the assignment tables. Ordinary application startup is unchanged, and recommendation, historical grouping and scheduling logic are untouched.
+
+I verified first-time setup and repeat runs with all 20 zones and 697,440 observations in a disposable PostgreSQL container. A repeat through Docker Compose preserved the existing seed row versions and a saved forecast. Changing an observation without changing row counts still failed verification. Smaller local fixtures checked missing observations, partial schemas, null/zero values, explicit reset and rollback after a failed import. These checks did not add tests to the retained recommendation suite or modify the running assignment database.
+
+### Reviewing the architecture for the interview
+
+I asked for another pass focused on how I would follow and explain the code in an interview. The scheduler previously stored last success and error fields even though scheduling only used the last attempt times. It now keeps those two timestamps and logs failures where each job runs. The next UTC hour is calculated in one place and used by scheduling, forecast coverage and recommendation planning.
+
+I kept the scoring path explicit. Zone comparison gathers the facts, and decision selection uses them to explain the outcome. For weather failures, the forecast client owns provider retry rules, the PostgreSQL adapter handles transaction errors, and the weather service handles reloading a forecast when the commit result is uncertain. The dashboard shares the forecast and window comparison between fetching and rendering zone details.
+
+The terminal debug instructions also exposed a configuration conflict. PowerShell's `DATABASE_URL` pointed at the published Windows port, and Compose used it to replace the container URL. Both containers now take their URL from `.env`, which uses the database service hostname. I verified repeat setup with the Windows URL still set in the shell.
+
+Local comparisons matched 2,000 scoring cases at full precision and in JSON. I also checked scheduler timing around the hour boundary, forecast recovery after an uncertain commit, and the rendered decision cards. These checks supplemented the tests retained at that stage.
 
 ## Technical challenges and remaining limits
 

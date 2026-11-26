@@ -50,8 +50,8 @@ func (s *Service) Areas() []repository.Area {
 }
 
 func (s *Service) LookupComparableHour(areaID int, at time.Time) (repository.HourlyStats, bool) {
-	_, season, day, hour := domain.LocalCalendarFields(at, s.location)
-	return s.statistics.Get(cache.HistoricalKey{AreaID: areaID, Season: season, DayOfWeek: day, HourOfDay: hour})
+	day, hour := domain.LocalWeekdayAndHour(at, s.location)
+	return s.statistics.Get(cache.HistoricalKey{AreaID: areaID, DayOfWeek: day, HourOfDay: hour})
 }
 
 func (s *Service) Coverage(minSamples int64) cache.HistoricalCoverage {

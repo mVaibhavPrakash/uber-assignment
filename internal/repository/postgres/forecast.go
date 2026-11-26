@@ -2,12 +2,13 @@ package postgres
 
 import (
 	"context"
-	"mobilitycontrolroom/internal/appErrors"
-
+	"errors"
 	"fmt"
+	"time"
+
+	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/domain"
 	"mobilitycontrolroom/internal/repository"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -69,7 +70,7 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	if err != nil {
 		return fmt.Errorf("begin forecast replacement: %w", err)
 	}
-	defer appErrors.Rollback(tx, "forecast", &err)
+	defer rollbackForecast(tx, &err)
 	if err = lockForecastPublication(ctx, tx); err != nil {
 		return err
 	}
@@ -83,7 +84,7 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	if err = copyForecast(ctx, tx, s); err != nil {
 		return err
 	}
-	return appErrors.CommitForecast(ctx, tx)
+	return commitForecast(ctx, tx)
 }
 
 // Keeps zone data stable and allows one forecast writer at a time.
@@ -117,6 +118,28 @@ func copyForecast(ctx context.Context, tx pgx.Tx, s repository.ForecastSnapshot)
 	}))
 	if err != nil {
 		return fmt.Errorf("copy complete forecast: %w", err)
+	}
+	return nil
+}
+
+// Cleans up an unfinished transaction and keeps any earlier error.
+// A committed transaction needs no cleanup.
+func rollbackForecast(tx pgx.Tx, result *error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		*result = errors.Join(*result, fmt.Errorf("rollback forecast: %w", err))
+	}
+}
+
+// Marks an uncertain save so the caller reloads instead of writing twice.
+func commitForecast(ctx context.Context, tx pgx.Tx) error {
+	if err := tx.Commit(ctx); err != nil {
+		wrapped := fmt.Errorf("commit forecast snapshot: %w", err)
+		if errors.Is(err, pgx.ErrTxCommitRollback) {
+			return wrapped
+		}
+		return errors.Join(appErrors.ErrCommitAmbiguous, wrapped)
 	}
 	return nil
 }

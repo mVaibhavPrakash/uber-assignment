@@ -7,7 +7,7 @@ import (
 )
 
 type HistoricalKey struct {
-	AreaID, Season, DayOfWeek, HourOfDay int
+	AreaID, DayOfWeek, HourOfDay int
 }
 
 type HistoricalSnapshot struct {
@@ -19,7 +19,7 @@ type HistoricalCoverage struct {
 }
 
 // NewHistorical indexes trusted database aggregates. The maximum size is
-// bounded by the seeded area's seasonal/day/hour combinations. Caller-owned
+// bounded by the seeded area's weekday/hour combinations. Caller-owned
 // slices and nullable pointers are copied both on insertion and lookup.
 func NewHistorical(areas []repository.Area, rows []repository.HourlyStats) (*HistoricalSnapshot, error) {
 	known := make(map[int]bool, len(areas))
@@ -32,13 +32,13 @@ func NewHistorical(areas []repository.Area, rows []repository.HourlyStats) (*His
 	if len(known) == 0 {
 		return nil, fmt.Errorf("cannot build history without seeded areas")
 	}
-	if len(rows) > len(known)*4*7*24 {
+	if len(rows) > len(known)*7*24 {
 		return nil, fmt.Errorf("historical snapshot exceeds calendar bound")
 	}
 	snapshot := &HistoricalSnapshot{statistics: make(map[HistoricalKey]repository.HourlyStats, len(rows))}
 	for _, row := range rows {
-		key := HistoricalKey{row.AreaID, row.Season, row.DayOfWeek, row.HourOfDay}
-		if !known[row.AreaID] || row.Season < 1 || row.Season > 4 || row.DayOfWeek < 1 || row.DayOfWeek > 7 || row.HourOfDay < 0 || row.HourOfDay > 23 {
+		key := HistoricalKey{AreaID: row.AreaID, DayOfWeek: row.DayOfWeek, HourOfDay: row.HourOfDay}
+		if !known[row.AreaID] || row.DayOfWeek < 1 || row.DayOfWeek > 7 || row.HourOfDay < 0 || row.HourOfDay > 23 {
 			return nil, fmt.Errorf("invalid historical calendar key %+v", key)
 		}
 		if _, exists := snapshot.statistics[key]; exists {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-
 	"errors"
 	"flag"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"mobilitycontrolroom/internal/config"
 	"mobilitycontrolroom/internal/database"
 	"mobilitycontrolroom/internal/history"
-
 	"mobilitycontrolroom/internal/recommendation"
 	"mobilitycontrolroom/internal/repository"
 	"mobilitycontrolroom/internal/repository/postgres"
@@ -63,15 +61,16 @@ func run() error {
 	jobs := scheduler.New(forecasts, recommendations, cfg, time.Now)
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	var workers sync.WaitGroup
-	defer func() { cancelWorker(); workers.Wait() }()
-	workers.Add(1)
-	go func() { defer workers.Done(); jobs.Run(workerCtx) }()
+	workers.Go(func() { jobs.Run(workerCtx) })
+	defer func() {
+		cancelWorker()
+		workers.Wait()
+	}()
 	return serveHTTP(ctx, cfg, api.Handler(recommendations, time.Now))
 }
 
 // initializeServices loads database evidence and connects weather and scoring.
 func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg config.Config) (*weather.Service, *recommendation.Manager, error) {
-
 	historicalCtx, cancelHistorical := context.WithTimeout(ctx, cfg.GetHistoricalQueryTimeout())
 	evidence, err := history.Load(historicalCtx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: cfg.GetMinRainfallMM()}, cfg.GetLocation())
 	cancelHistorical()
@@ -100,8 +99,13 @@ func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg c
 
 // serveHTTP runs the HTTP server and waits for it to stop or for shutdown.
 func serveHTTP(ctx context.Context, cfg config.Config, handler http.Handler) error {
-
-	srv := &http.Server{Addr: cfg.GetListenAddr(), Handler: handler, ReadHeaderTimeout: cfg.GetHTTPAttemptTimeout(), ReadTimeout: cfg.GetHTTPAttemptTimeout(), WriteTimeout: cfg.GetExternalRequestTimeout(), IdleTimeout: cfg.GetShutdownTimeout()}
+	srv := &http.Server{
+		Addr: cfg.GetListenAddr(), Handler: handler,
+		ReadHeaderTimeout: cfg.GetHTTPAttemptTimeout(),
+		ReadTimeout:       cfg.GetHTTPAttemptTimeout(),
+		WriteTimeout:      cfg.GetExternalRequestTimeout(),
+		IdleTimeout:       cfg.GetShutdownTimeout(),
+	}
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
 	slog.Info("server listening", "address", cfg.GetListenAddr())

@@ -3,7 +3,6 @@ package weather
 
 import (
 	"context"
-
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,7 +43,17 @@ func (c *Client) Fetch(ctx context.Context, areas []repository.Area, now time.Ti
 	}
 
 	start := now.UTC().Truncate(time.Hour)
-	params := url.Values{"latitude": {strings.Join(latitudes, ",")}, "longitude": {strings.Join(longitudes, ",")}, "hourly": {"rain,snowfall,precipitation_probability"}, "timezone": {"GMT"}, "timeformat": {"unixtime"}, "precipitation_unit": {"mm"}, "start_hour": {start.Format("2006-01-02T15:04")}, "end_hour": {start.Add(time.Duration(c.config.GetForecastHours()) * time.Hour).Format("2006-01-02T15:04")}}
+	end := start.Add(time.Duration(c.config.GetForecastHours()) * time.Hour)
+	params := url.Values{
+		"latitude":           {strings.Join(latitudes, ",")},
+		"longitude":          {strings.Join(longitudes, ",")},
+		"hourly":             {"rain,snowfall,precipitation_probability"},
+		"timezone":           {"GMT"},
+		"timeformat":         {"unixtime"},
+		"precipitation_unit": {"mm"},
+		"start_hour":         {start.Format("2006-01-02T15:04")},
+		"end_hour":           {end.Format("2006-01-02T15:04")},
+	}
 	raw, err := c.requestWithRetries(ctx, params)
 	if err != nil {
 		return repository.ForecastSnapshot{}, err

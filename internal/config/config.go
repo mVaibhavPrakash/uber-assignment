@@ -12,14 +12,32 @@ import (
 // Config holds settings loaded and validated by Load or Parse.
 // Services receive copies, so setters do not reconfigure already-created services.
 type Config struct {
-	listenAddr, databaseURL                                                                                               string
-	forecastURL                                                                                                           string
-	location                                                                                                              *time.Location
-	minHistoricalSamples, forecastHours, maxAttempts                                                                      int
-	minRainfallMM, minAdditionalTripsPerHour                                                                              float64
-	window, recommendationRefresh, weatherRefresh, schedulerCheck, weatherMaxStaleness                                    time.Duration
-	httpAttemptTimeout, externalRequestTimeout, retryDelay                                                                time.Duration
-	weatherJobTimeout, historicalQueryTimeout, recommendationJobTimeout, dbTimeout, shutdownTimeout, frontendPollInterval time.Duration
+	listenAddr  string
+	databaseURL string
+	forecastURL string
+	location    *time.Location
+
+	window                    time.Duration
+	minHistoricalSamples      int
+	minRainfallMM             float64
+	minAdditionalTripsPerHour float64
+
+	forecastHours         int
+	maxAttempts           int
+	retryDelay            time.Duration
+	recommendationRefresh time.Duration
+	weatherRefresh        time.Duration
+	schedulerCheck        time.Duration
+	weatherMaxStaleness   time.Duration
+	frontendPollInterval  time.Duration
+
+	httpAttemptTimeout       time.Duration
+	externalRequestTimeout   time.Duration
+	weatherJobTimeout        time.Duration
+	historicalQueryTimeout   time.Duration
+	recommendationJobTimeout time.Duration
+	dbTimeout                time.Duration
+	shutdownTimeout          time.Duration
 }
 
 // Setters update this config value; Load and Parse validate environment settings.
@@ -154,26 +172,19 @@ func (p *environmentParser) loadScoringAndWeather(c *Config) error {
 }
 
 func (p *environmentParser) loadDurations(c *Config) error {
-	for _, item := range []struct {
-		key, fallback string
-		target        *time.Duration
-	}{
-		{"RECOMMENDATION_WINDOW", "2h", &c.window},
-		{"RECOMMENDATION_REFRESH_INTERVAL", "1h", &c.recommendationRefresh},
-		{"WEATHER_REFRESH_INTERVAL", "3h", &c.weatherRefresh},
-		{"SCHEDULER_CHECK_INTERVAL", "15m", &c.schedulerCheck},
-		{"WEATHER_MAX_STALENESS", "6h", &c.weatherMaxStaleness},
-		{"HTTP_ATTEMPT_TIMEOUT", "10s", &c.httpAttemptTimeout},
-		{"EXTERNAL_REQUEST_TIMEOUT", "20s", &c.externalRequestTimeout},
-		{"RETRY_DELAY", "1s", &c.retryDelay},
-		{"WEATHER_JOB_TIMEOUT", "2m", &c.weatherJobTimeout},
-		{"HISTORICAL_QUERY_TIMEOUT", "60s", &c.historicalQueryTimeout},
-		{"RECOMMENDATION_JOB_TIMEOUT", "30s", &c.recommendationJobTimeout},
-		{"DB_TIMEOUT", "15s", &c.dbTimeout},
-		{"SHUTDOWN_TIMEOUT", "15s", &c.shutdownTimeout},
-		{"FRONTEND_POLL_INTERVAL", "60s", &c.frontendPollInterval},
-	} {
-		*item.target = p.duration(item.key, item.fallback)
-	}
+	c.window = p.duration("RECOMMENDATION_WINDOW", "2h")
+	c.recommendationRefresh = p.duration("RECOMMENDATION_REFRESH_INTERVAL", "1h")
+	c.weatherRefresh = p.duration("WEATHER_REFRESH_INTERVAL", "3h")
+	c.schedulerCheck = p.duration("SCHEDULER_CHECK_INTERVAL", "15m")
+	c.weatherMaxStaleness = p.duration("WEATHER_MAX_STALENESS", "6h")
+	c.httpAttemptTimeout = p.duration("HTTP_ATTEMPT_TIMEOUT", "10s")
+	c.externalRequestTimeout = p.duration("EXTERNAL_REQUEST_TIMEOUT", "20s")
+	c.retryDelay = p.duration("RETRY_DELAY", "1s")
+	c.weatherJobTimeout = p.duration("WEATHER_JOB_TIMEOUT", "2m")
+	c.historicalQueryTimeout = p.duration("HISTORICAL_QUERY_TIMEOUT", "60s")
+	c.recommendationJobTimeout = p.duration("RECOMMENDATION_JOB_TIMEOUT", "30s")
+	c.dbTimeout = p.duration("DB_TIMEOUT", "15s")
+	c.shutdownTimeout = p.duration("SHUTDOWN_TIMEOUT", "15s")
+	c.frontendPollInterval = p.duration("FRONTEND_POLL_INTERVAL", "60s")
 	return p.err
 }

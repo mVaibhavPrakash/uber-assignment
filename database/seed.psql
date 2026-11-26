@@ -38,20 +38,52 @@ WHERE table_schema = 'public'
 \endif
 \if :create_schema
   \ir migrations/000001_init.up.sql
+\else
+  -- Older installations stored a derived season. Upgrade them in the seed transaction.
+  SELECT EXISTS (SELECT FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'historical_observations'
+                   AND column_name = 'season') AS has_season \gset
+  \if :has_season
+    ALTER TABLE public.historical_observations DROP COLUMN season;
+  \endif
 \endif
 
-LOCK TABLE community_areas, historical_observations, weather_forecasts IN ACCESS EXCLUSIVE MODE;
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM community_areas)
-       OR EXISTS (SELECT 1 FROM historical_observations)
-       OR EXISTS (SELECT 1 FROM weather_forecasts) THEN
-        RAISE EXCEPTION 'Database already contains data; use an explicit reset only for the assignment database';
-    END IF;
-END $$;
+-- Stage the CSVs so repeat setup can verify every field without overwriting data.
+CREATE TEMP TABLE seed_areas (LIKE community_areas) ON COMMIT DROP;
+CREATE TEMP TABLE seed_observations (LIKE historical_observations) ON COMMIT DROP;
+\copy seed_areas (id, name, latitude, longitude) FROM 'data/public/areas.csv' WITH (FORMAT csv, HEADER MATCH, NULL '\N', ENCODING 'UTF8')
+\copy seed_observations FROM 'data/public/historical_observations.csv' WITH (FORMAT csv, HEADER MATCH, NULL '\N', ENCODING 'UTF8')
 
-\copy community_areas (id, name, latitude, longitude) FROM 'data/public/areas.csv' WITH (FORMAT csv, HEADER MATCH, NULL '\N', ENCODING 'UTF8')
-\copy historical_observations (area_id, hour_start, local_date, day_of_week, season, hour_of_day, trip_count, rain_mm, snowfall_cm, temperature_c, apparent_temperature_c, precipitation_mm, wind_speed_kmh) FROM 'data/public/historical_observations.csv' WITH (FORMAT csv, HEADER MATCH, NULL '\N', ENCODING 'UTF8')
+-- Keep data stable during verification while allowing the running API to read it.
+LOCK TABLE community_areas, historical_observations, weather_forecasts IN SHARE ROW EXCLUSIVE MODE;
+SELECT NOT EXISTS (SELECT 1 FROM community_areas)
+   AND NOT EXISTS (SELECT 1 FROM historical_observations)
+   AND NOT EXISTS (SELECT 1 FROM weather_forecasts) AS load_seed \gset
+
+\if :load_seed
+  INSERT INTO community_areas SELECT * FROM seed_areas;
+  INSERT INTO historical_observations SELECT * FROM seed_observations;
+\else
+  DO $$
+  BEGIN
+      IF EXISTS (
+          (TABLE community_areas EXCEPT ALL TABLE seed_areas)
+          UNION ALL
+          (TABLE seed_areas EXCEPT ALL TABLE community_areas)
+      ) OR EXISTS (
+          (TABLE historical_observations EXCEPT ALL TABLE seed_observations)
+          UNION ALL
+          (TABLE seed_observations EXCEPT ALL TABLE historical_observations)
+      ) THEN
+          RAISE EXCEPTION 'Existing assignment data is partial or differs from the bundled CSVs; inspect it before an explicit reset';
+      END IF;
+  END $$;
+\endif
 COMMIT;
-\echo CSV imports committed. If statistics refresh fails, do not rerun setup without inspecting the database.
-ANALYZE community_areas, historical_observations, weather_forecasts;
+\if :load_seed
+  \echo CSV imports committed. Refreshing database statistics.
+  ANALYZE community_areas, historical_observations, weather_forecasts;
+  \echo Setup complete.
+\else
+  \echo Database already initialized; skipping seed.
+\endif

@@ -57,7 +57,6 @@ type Coverage struct {
 // It explains the inputs and estimated trips for one hour, or why it could not be scored.
 type HourEvidence struct {
 	HourStart                  time.Time                `json:"hour_start"`
-	Season                     int                      `json:"season"`
 	DayOfWeek                  int                      `json:"day_of_week"`
 	LocalHour                  int                      `json:"local_hour"`
 	Forecast                   *repository.ForecastHour `json:"forecast"`
@@ -90,7 +89,7 @@ type AreaEvidence struct {
 type DecisionReason string
 
 const (
-	ReasonNoQualifyingRain          DecisionReason = "no_qualifying_rain"
+	ReasonNoSignificantRainfall     DecisionReason = "no_significant_rainfall"
 	ReasonBelowThreshold            DecisionReason = "below_intervention_threshold"
 	ReasonHighestImpact             DecisionReason = "highest_expected_impact"
 	ReasonIncompleteEvidence        DecisionReason = "incomplete_evidence"

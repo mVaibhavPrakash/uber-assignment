@@ -10,6 +10,10 @@ export interface HourEvidence {
     snowfall_cm: number;
     precipitation_probability: number;
   } | null;
+  dry_mean: number | null;
+  rain_mean: number | null;
+  dry_samples: number;
+  rain_samples: number;
   baseline_trips: number | null;
   estimated_trips: number | null;
   additional_trips: number | null;

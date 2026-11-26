@@ -3,13 +3,18 @@ package domain
 import (
 	"fmt"
 	"math"
-	"mobilitycontrolroom/internal/repository"
 	"time"
 
 	"github.com/google/uuid"
+	"mobilitycontrolroom/internal/repository"
 )
 
-func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+// ValidWeatherValues checks the hourly measurements used to estimate rain impact.
+func ValidWeatherValues(h repository.ForecastHour) bool {
+	return h.RainMM >= 0 && h.RainMM <= math.MaxFloat64 &&
+		h.SnowfallCM >= 0 && h.SnowfallCM <= math.MaxFloat64 &&
+		h.PrecipitationProbability >= 0 && h.PrecipitationProbability <= 100
+}
 
 // ValidateForecast requires a complete rectangular scope and contiguous UTC
 // hours. It validates every write independently of database constraints.
@@ -74,7 +79,10 @@ func validateRowsAndCollectCoverage(hours []repository.ForecastHour, known map[i
 		hour int64
 	}]bool{}
 	for _, h := range hours {
-		if !known[h.AreaID] || h.HourStart.IsZero() || !h.HourStart.Equal(h.HourStart.Truncate(time.Hour)) || !isFinite(h.RainMM) || !isFinite(h.SnowfallCM) || h.RainMM < 0 || h.SnowfallCM < 0 || h.RainMM > math.MaxFloat32 || h.SnowfallCM > math.MaxFloat32 || h.PrecipitationProbability < 0 || h.PrecipitationProbability > 100 {
+		wholeHour := !h.HourStart.IsZero() && h.HourStart.Equal(h.HourStart.Truncate(time.Hour))
+		// PostgreSQL stores the two amounts as REAL (float32).
+		if !known[h.AreaID] || !wholeHour || !ValidWeatherValues(h) ||
+			h.RainMM > math.MaxFloat32 || h.SnowfallCM > math.MaxFloat32 {
 			return nil, fmt.Errorf("invalid forecast row for area %d", h.AreaID)
 		}
 		key := struct {

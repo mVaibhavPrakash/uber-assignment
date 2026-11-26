@@ -9,11 +9,21 @@ export default function ComparisonBars({
 }) {
   const baseline = evidence.baseline_trips;
   const estimated = evidence.estimated_trips;
-  if (!evidence.assessable || baseline == null || estimated == null) {
+  if (!evidence.assessable) {
     return (
       <p className="muted">
         A full-window trip comparison is unavailable because this zone has
         incomplete evidence.
+      </p>
+    );
+  }
+  if (baseline == null || estimated == null) {
+    return (
+      <p className="muted">
+        Typical and expected trip totals are unavailable for the full window.{" "}
+        {evidence.additional_trips === 0
+          ? "No additional rain-related trips are projected."
+          : `Modeled rain-related change: ${formatSignedNumber(evidence.additional_trips)} trips.`}
       </p>
     );
   }

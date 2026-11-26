@@ -66,7 +66,7 @@ func (r *Repository) AggregateHourly(ctx context.Context, q repository.Historica
 	}
 
 	return collectRows(rows, "historical group", "historical groups", func(s *repository.HourlyStats) error {
-		return rows.Scan(&s.AreaID, &s.Season, &s.DayOfWeek, &s.HourOfDay, &s.DryMean, &s.DrySamples, &s.RainMean, &s.RainSamples, &s.RainStdDev, &s.AbsoluteUplift, &s.PercentageUplift)
+		return rows.Scan(&s.AreaID, &s.DayOfWeek, &s.HourOfDay, &s.DryMean, &s.DrySamples, &s.RainMean, &s.RainSamples, &s.RainStdDev, &s.AbsoluteUplift, &s.PercentageUplift)
 	})
 }
 

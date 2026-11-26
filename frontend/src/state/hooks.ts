@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchMatchingInsights, fetchRecommendation } from '../api/client';
+import { fetchMatchingInsights, fetchRecommendation, matchesForecastWindow } from '../api/client';
 import type { Insights, Recommendation } from '../types/recommendation';
 
 // Poll the API and hide saved recommendations as soon as their validity ends.
@@ -87,9 +87,7 @@ export function useInsights(
   }, [result, areaID, expired, refresh]);
 
   // Never briefly show details from the previous zone or planning window.
-  const current = insights?.evidence.area.id === areaID
-    && insights.forecast_version === result?.forecast_version
-    && insights.window.start === result?.window.start
-    && insights.window.end === result?.window.end ? insights : null;
+  const current = insights && result && insights.evidence.area.id === areaID
+    && matchesForecastWindow(insights, result) ? insights : null;
   return { insights: current, error };
 }
