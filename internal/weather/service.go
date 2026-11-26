@@ -80,7 +80,7 @@ func (s *Service) FetchAndPublishForecast(ctx context.Context) error {
 	}
 	if err = s.forecasts.ReplaceSnapshot(ctx, snapshot); err != nil {
 		if errors.Is(err, appErrors.ErrCommitAmbiguous) {
-			return appErrors.ReloadAfterUncertainForecastCommit(ctx, s.config.DBTimeout, snapshot.Version, err,
+			return appErrors.ReloadAfterUncertainForecastCommit(ctx, s.config.GetDBTimeout(), snapshot.Version, err,
 				func(ctx context.Context) (string, error) { return s.reloadAndPublishSavedForecast(ctx, areas) }, s.store.Clear)
 		}
 		return err
@@ -98,19 +98,20 @@ func (s *Service) CurrentForecast(now time.Time) (View, error) {
 	view := View{Freshness: "fresh", Version: snapshot.Version, FetchedAt: snapshot.FetchedAt}
 
 	age := now.Sub(snapshot.FetchedAt)
-	if age < 0 || age > s.config.WeatherMaxStaleness {
-		return View{Freshness: "unavailable", Version: snapshot.Version, FetchedAt: snapshot.FetchedAt}, appErrors.ErrForecastExpired
+	if age < 0 || age > s.config.GetWeatherMaxStaleness() {
+		view.Freshness = "unavailable"
+		return view, appErrors.ErrForecastExpired
 	}
 
 	start := now.UTC().Truncate(time.Hour).Add(time.Hour)
-	end := start.Add(s.config.Window)
+	end := start.Add(s.config.GetWindow())
 	first, last := coveredHourRange(snapshot.Hours)
 	if first.After(start) || last.Before(end.Add(-time.Hour)) {
 		view.Freshness = "unavailable"
 		return view, appErrors.ErrForecastCoverage
 	}
 
-	if age >= s.config.WeatherRefresh {
+	if age >= s.config.GetWeatherRefresh() {
 		view.Freshness = "stale"
 	}
 	view.Snapshot = &snapshot

@@ -42,14 +42,14 @@ func TestExternalAPIFailureKeepsLastForecast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.RetryDelay = time.Millisecond
+	config.SetRetryDelay(time.Millisecond)
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	config.ForecastURL = server.URL
+	config.SetForecastURL(server.URL)
 	client, err := weather.NewClient(config, server.Client())
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestExternalAPIFailureKeepsLastForecast(t *testing.T) {
 	if err := service.FetchAndPublishForecast(context.Background()); err == nil {
 		t.Fatal("provider outage was accepted")
 	}
-	if calls.Load() != int32(config.MaxAttempts) || store.writes != 0 {
+	if calls.Load() != int32(config.GetMaxAttempts()) || store.writes != 0 {
 		t.Fatalf("outage must use bounded retries without replacing data: calls=%d writes=%d", calls.Load(), store.writes)
 	}
 	view, err := service.CurrentForecast(now.Add(3 * time.Hour))

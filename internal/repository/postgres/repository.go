@@ -43,22 +43,9 @@ func listAreas(ctx context.Context, reader areaReader) ([]repository.Area, error
 		return nil, fmt.Errorf("list areas: %w", err)
 	}
 
-	defer rows.Close()
-	areas := make([]repository.Area, 0)
-
-	for rows.Next() {
-		var area repository.Area
-		if err = rows.Scan(&area.ID, &area.Name, &area.Latitude, &area.Longitude); err != nil {
-			return nil, fmt.Errorf("scan area: %w", err)
-		}
-		areas = append(areas, area)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("read areas: %w", err)
-	}
-
-	return areas, nil
+	return collectRows(rows, "area", "areas", func(area *repository.Area) error {
+		return rows.Scan(&area.ID, &area.Name, &area.Latitude, &area.Longitude)
+	})
 }
 
 func validateHistoricalQuery(q repository.HistoricalQuery) error {
@@ -78,50 +65,24 @@ func (r *Repository) AggregateHourly(ctx context.Context, q repository.Historica
 		return nil, fmt.Errorf("aggregate historical hours: %w", err)
 	}
 
-	defer rows.Close()
-	statistics := make([]repository.HourlyStats, 0)
-
-	for rows.Next() {
-		var s repository.HourlyStats
-		if err = rows.Scan(&s.AreaID, &s.Season, &s.DayOfWeek, &s.HourOfDay, &s.DryMean, &s.DrySamples, &s.RainMean, &s.RainSamples, &s.RainStdDev, &s.AbsoluteUplift, &s.PercentageUplift); err != nil {
-			return nil, fmt.Errorf("scan historical group: %w", err)
-		}
-		statistics = append(statistics, s)
-	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("read historical groups: %w", err)
-	}
-
-	return statistics, nil
+	return collectRows(rows, "historical group", "historical groups", func(s *repository.HourlyStats) error {
+		return rows.Scan(&s.AreaID, &s.Season, &s.DayOfWeek, &s.HourOfDay, &s.DryMean, &s.DrySamples, &s.RainMean, &s.RainSamples, &s.RainStdDev, &s.AbsoluteUplift, &s.PercentageUplift)
+	})
 }
 
-// It is an adapter-specific inspection tool, not a business-layer
-// repository method. It executes the identical SQL used by AggregateHourly.
-func (r *Repository) ExplainHistorical(ctx context.Context, q repository.HistoricalQuery) ([]string, error) {
-	if err := validateHistoricalQuery(q); err != nil {
-		return nil, err
-	}
-
-	rows, err := r.pool.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS) "+historicalSQL, q.MinRainfallMM)
-	if err != nil {
-		return nil, fmt.Errorf("explain historical query: %w", err)
-	}
-
+// Keep row cleanup and scan/read errors consistent across repository queries.
+func collectRows[T any](rows pgx.Rows, scanLabel, readLabel string, scan func(*T) error) ([]T, error) {
 	defer rows.Close()
-	plan := []string{}
-
+	values := make([]T, 0)
 	for rows.Next() {
-		var line string
-		if err = rows.Scan(&line); err != nil {
-			return nil, fmt.Errorf("scan historical plan: %w", err)
+		var value T
+		if err := scan(&value); err != nil {
+			return nil, fmt.Errorf("scan %s: %w", scanLabel, err)
 		}
-		plan = append(plan, line)
+		values = append(values, value)
 	}
-
-	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("read historical plan: %w", err)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", readLabel, err)
 	}
-
-	return plan, nil
+	return values, nil
 }

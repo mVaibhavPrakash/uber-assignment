@@ -35,11 +35,11 @@ type Manager struct {
 
 // Connects historical evidence, weather and the configured scoring rules.
 func NewManager(h HistoricalEvidence, w ForecastEvidence, c config.Config) (*Manager, error) {
-	o := Options{Window: c.Window, MinSamples: int64(c.MinHistoricalSamples), RainThreshold: c.MinRainfallMM, AdditionalPerHour: c.MinAdditionalTripsPerHour, Location: c.Location}
+	o := Options{Window: c.GetWindow(), MinSamples: int64(c.GetMinHistoricalSamples()), RainThreshold: c.GetMinRainfallMM(), AdditionalPerHour: c.GetMinAdditionalTripsPerHour(), Location: c.GetLocation()}
 	if err := o.Validate(); err != nil {
 		return nil, err
 	}
-	return &Manager{history: h, weather: w, options: o, maxAge: c.WeatherMaxStaleness}, nil
+	return &Manager{history: h, weather: w, options: o, maxAge: c.GetWeatherMaxStaleness()}, nil
 }
 
 // Returns the zones loaded from the database.

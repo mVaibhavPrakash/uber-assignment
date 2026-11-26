@@ -16,15 +16,15 @@ import (
 // Calls the endpoint up to MaxAttempts times. Temporary failures wait
 // longer after each attempt; permanent errors stop immediately.
 func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.ExternalRequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.config.GetExternalRequestTimeout())
 	defer cancel()
-	endpoint, err := url.Parse(c.config.ForecastURL)
+	endpoint, err := url.Parse(c.config.GetForecastURL())
 	if err != nil {
 		return nil, err
 	}
 	endpoint.RawQuery = params.Encode()
-	delay := min(c.config.RetryDelay, c.config.ExternalRequestTimeout)
-	for attempt := 1; attempt <= c.config.MaxAttempts; attempt++ {
+	delay := min(c.config.GetRetryDelay(), c.config.GetExternalRequestTimeout())
+	for attempt := 1; attempt <= c.config.GetMaxAttempts(); attempt++ {
 		body, retryAfter, err := c.sendForecastRequest(ctx, endpoint.String())
 		if err == nil {
 			return body, nil
@@ -33,14 +33,14 @@ func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]b
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !appErrors.IsRetryableWeatherError(err) || attempt == c.config.MaxAttempts {
+		if !appErrors.IsRetryableWeatherError(err) || attempt == c.config.GetMaxAttempts() {
 			return nil, fmt.Errorf("fetch weather: %w", err)
 		}
 		if err := waitForRetryOrCancellation(ctx, retryDelayWithJitter(delay, retryAfter)); err != nil {
 			return nil, err
 		}
 		// Double the next delay, capped at the total request timeout.
-		delay = min(delay, c.config.ExternalRequestTimeout/2) * 2
+		delay = min(delay, c.config.GetExternalRequestTimeout()/2) * 2
 	}
 	return nil, fmt.Errorf("weather attempts must be positive")
 }
@@ -56,12 +56,14 @@ func retryDelayWithJitter(delay, retryAfter time.Duration) time.Duration {
 // Sends one GET with a timeout. It returns the response body or
 // the provider error and how long the provider asks us to wait before retrying.
 func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]byte, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.HTTPAttemptTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.config.GetHTTPAttemptTimeout())
 	defer cancel()
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, err
 	}
+
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, 0, err
@@ -70,11 +72,13 @@ func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]by
 	if response.StatusCode != http.StatusOK {
 		return nil, parseRetryAfter(response.Header.Get("Retry-After")), appErrors.ReadProviderError(response)
 	}
+
 	const maxBytes = 8 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if len(body) > maxBytes {
 		return nil, 0, fmt.Errorf("weather response too large")
 	}
+
 	return body, 0, err
 }
 

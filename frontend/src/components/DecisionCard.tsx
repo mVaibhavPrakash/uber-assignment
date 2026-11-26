@@ -4,12 +4,8 @@ import { formatAreaName, formatNewYorkTime, formatPlanningDuration, formatNumber
 import type { Recommendation } from "../types/recommendation";
 
 export function ForecastBadge({ freshness }: { freshness: string }) {
-  const label =
-    freshness === "fresh"
-      ? "Forecast fresh"
-      : freshness === "stale"
-        ? "Forecast stale"
-        : "Forecast unavailable";
+  const label = freshness === "fresh" || freshness === "stale"
+    ? `Forecast ${freshness}` : "Forecast unavailable";
   return (
     <span className={`badge ${freshness}`}>
       <span aria-hidden="true">●</span> {label}

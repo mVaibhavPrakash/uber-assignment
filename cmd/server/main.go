@@ -50,7 +50,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := database.Open(ctx, cfg.DatabaseURL, cfg.DBTimeout)
+	pool, err := database.Open(ctx, cfg.GetDatabaseURL(), cfg.GetDBTimeout())
 	if err != nil {
 		return err
 	}
@@ -72,20 +72,20 @@ func run() error {
 // initializeServices loads database evidence and connects weather and scoring.
 func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg config.Config) (*weather.Service, *recommendation.Manager, error) {
 
-	historicalCtx, cancelHistorical := context.WithTimeout(ctx, cfg.HistoricalQueryTimeout)
-	evidence, err := history.Load(historicalCtx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: cfg.MinRainfallMM}, cfg.Location)
+	historicalCtx, cancelHistorical := context.WithTimeout(ctx, cfg.GetHistoricalQueryTimeout())
+	evidence, err := history.Load(historicalCtx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: cfg.GetMinRainfallMM()}, cfg.GetLocation())
 	cancelHistorical()
 	if err != nil {
 		return nil, nil, fmt.Errorf("initialize historical evidence: %w", err)
 	}
-	coverage := evidence.Coverage(int64(cfg.MinHistoricalSamples))
+	coverage := evidence.Coverage(int64(cfg.GetMinHistoricalSamples()))
 	slog.Info("historical evidence loaded", "areas", len(evidence.Areas()), "groups", coverage.Groups, "dry_supported_groups", coverage.DrySupportedGroups, "rain_supported_groups", coverage.RainSupportedGroups)
 	provider, err := weather.NewClient(cfg, &http.Client{})
 	if err != nil {
 		return nil, nil, err
 	}
 	forecasts := weather.NewService(adapter, adapter, provider, cfg, time.Now)
-	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.DBTimeout)
+	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.GetDBTimeout())
 	err = forecasts.RestoreSavedForecast(loadCtx)
 	cancelLoad()
 	if err != nil {
@@ -101,10 +101,10 @@ func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg c
 // serveHTTP runs the HTTP server and waits for it to stop or for shutdown.
 func serveHTTP(ctx context.Context, cfg config.Config, handler http.Handler) error {
 
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: handler, ReadHeaderTimeout: cfg.HTTPAttemptTimeout, ReadTimeout: cfg.HTTPAttemptTimeout, WriteTimeout: cfg.ExternalRequestTimeout, IdleTimeout: cfg.ShutdownTimeout}
+	srv := &http.Server{Addr: cfg.GetListenAddr(), Handler: handler, ReadHeaderTimeout: cfg.GetHTTPAttemptTimeout(), ReadTimeout: cfg.GetHTTPAttemptTimeout(), WriteTimeout: cfg.GetExternalRequestTimeout(), IdleTimeout: cfg.GetShutdownTimeout()}
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	slog.Info("server listening", "address", cfg.ListenAddr)
+	slog.Info("server listening", "address", cfg.GetListenAddr())
 
 	select {
 	case err := <-done:
@@ -113,7 +113,7 @@ func serveHTTP(ctx context.Context, cfg config.Config, handler http.Handler) err
 		}
 		return nil
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.GetShutdownTimeout())
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			closeErr := srv.Close()

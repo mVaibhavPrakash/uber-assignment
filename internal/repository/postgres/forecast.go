@@ -5,7 +5,6 @@ import (
 	"mobilitycontrolroom/internal/appErrors"
 
 	"fmt"
-	"mobilitycontrolroom/internal/database"
 	"mobilitycontrolroom/internal/domain"
 	"mobilitycontrolroom/internal/repository"
 	"time"
@@ -66,9 +65,9 @@ func (r *Repository) LoadLatest(ctx context.Context) (repository.ForecastSnapsho
 }
 
 func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastSnapshot) (err error) {
-	tx, err := database.Begin(ctx, r.pool, "forecast replacement")
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin forecast replacement: %w", err)
 	}
 	defer appErrors.Rollback(tx, "forecast", &err)
 	if err = lockForecastPublication(ctx, tx); err != nil {

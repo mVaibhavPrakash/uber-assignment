@@ -7,6 +7,7 @@ import (
 	"mobilitycontrolroom/internal/recommendation"
 	"mobilitycontrolroom/internal/repository"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -67,14 +68,7 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 		appErrors.WriteHTTPError(w, appErrors.InvalidAreaID)
 		return
 	}
-	known := false
-	for _, area := range h.service.Areas() {
-		if area.ID == id {
-			known = true
-			break
-		}
-	}
-	if !known {
+	if !slices.ContainsFunc(h.service.Areas(), func(area repository.Area) bool { return area.ID == id }) {
 		appErrors.WriteHTTPError(w, appErrors.AreaNotFound)
 		return
 	}

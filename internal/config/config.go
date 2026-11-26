@@ -2,25 +2,73 @@ package config
 
 import (
 	"fmt"
-	"math"
-	"net"
-	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 	_ "time/tzdata"
 )
 
+// Config holds settings loaded and validated by Load or Parse.
+// Services receive copies, so setters do not reconfigure already-created services.
 type Config struct {
-	ListenAddr, DatabaseURL                                                                                               string
-	ForecastURL                                                                                                           string
-	Location                                                                                                              *time.Location
-	MinHistoricalSamples, ForecastHours, MaxAttempts                                                                      int
-	MinRainfallMM, MinAdditionalTripsPerHour                                                                              float64
-	Window, RecommendationRefresh, WeatherRefresh, SchedulerCheck, WeatherMaxStaleness                                    time.Duration
-	HTTPAttemptTimeout, ExternalRequestTimeout, RetryDelay                                                                time.Duration
-	WeatherJobTimeout, HistoricalQueryTimeout, RecommendationJobTimeout, DBTimeout, ShutdownTimeout, FrontendPollInterval time.Duration
+	listenAddr, databaseURL                                                                                               string
+	forecastURL                                                                                                           string
+	location                                                                                                              *time.Location
+	minHistoricalSamples, forecastHours, maxAttempts                                                                      int
+	minRainfallMM, minAdditionalTripsPerHour                                                                              float64
+	window, recommendationRefresh, weatherRefresh, schedulerCheck, weatherMaxStaleness                                    time.Duration
+	httpAttemptTimeout, externalRequestTimeout, retryDelay                                                                time.Duration
+	weatherJobTimeout, historicalQueryTimeout, recommendationJobTimeout, dbTimeout, shutdownTimeout, frontendPollInterval time.Duration
 }
+
+// Setters update this config value; Load and Parse validate environment settings.
+func (c Config) GetListenAddr() string                            { return c.listenAddr }
+func (c *Config) SetListenAddr(value string)                      { c.listenAddr = value }
+func (c Config) GetDatabaseURL() string                           { return c.databaseURL }
+func (c *Config) SetDatabaseURL(value string)                     { c.databaseURL = value }
+func (c Config) GetForecastURL() string                           { return c.forecastURL }
+func (c *Config) SetForecastURL(value string)                     { c.forecastURL = value }
+func (c Config) GetLocation() *time.Location                      { return c.location }
+func (c *Config) SetLocation(value *time.Location)                { c.location = value }
+func (c Config) GetMinHistoricalSamples() int                     { return c.minHistoricalSamples }
+func (c *Config) SetMinHistoricalSamples(value int)               { c.minHistoricalSamples = value }
+func (c Config) GetForecastHours() int                            { return c.forecastHours }
+func (c *Config) SetForecastHours(value int)                      { c.forecastHours = value }
+func (c Config) GetMaxAttempts() int                              { return c.maxAttempts }
+func (c *Config) SetMaxAttempts(value int)                        { c.maxAttempts = value }
+func (c Config) GetMinRainfallMM() float64                        { return c.minRainfallMM }
+func (c *Config) SetMinRainfallMM(value float64)                  { c.minRainfallMM = value }
+func (c Config) GetMinAdditionalTripsPerHour() float64            { return c.minAdditionalTripsPerHour }
+func (c *Config) SetMinAdditionalTripsPerHour(value float64)      { c.minAdditionalTripsPerHour = value }
+func (c Config) GetWindow() time.Duration                         { return c.window }
+func (c *Config) SetWindow(value time.Duration)                   { c.window = value }
+func (c Config) GetRecommendationRefresh() time.Duration          { return c.recommendationRefresh }
+func (c *Config) SetRecommendationRefresh(value time.Duration)    { c.recommendationRefresh = value }
+func (c Config) GetWeatherRefresh() time.Duration                 { return c.weatherRefresh }
+func (c *Config) SetWeatherRefresh(value time.Duration)           { c.weatherRefresh = value }
+func (c Config) GetSchedulerCheck() time.Duration                 { return c.schedulerCheck }
+func (c *Config) SetSchedulerCheck(value time.Duration)           { c.schedulerCheck = value }
+func (c Config) GetWeatherMaxStaleness() time.Duration            { return c.weatherMaxStaleness }
+func (c *Config) SetWeatherMaxStaleness(value time.Duration)      { c.weatherMaxStaleness = value }
+func (c Config) GetHTTPAttemptTimeout() time.Duration             { return c.httpAttemptTimeout }
+func (c *Config) SetHTTPAttemptTimeout(value time.Duration)       { c.httpAttemptTimeout = value }
+func (c Config) GetExternalRequestTimeout() time.Duration         { return c.externalRequestTimeout }
+func (c *Config) SetExternalRequestTimeout(value time.Duration)   { c.externalRequestTimeout = value }
+func (c Config) GetRetryDelay() time.Duration                     { return c.retryDelay }
+func (c *Config) SetRetryDelay(value time.Duration)               { c.retryDelay = value }
+func (c Config) GetWeatherJobTimeout() time.Duration              { return c.weatherJobTimeout }
+func (c *Config) SetWeatherJobTimeout(value time.Duration)        { c.weatherJobTimeout = value }
+func (c Config) GetHistoricalQueryTimeout() time.Duration         { return c.historicalQueryTimeout }
+func (c *Config) SetHistoricalQueryTimeout(value time.Duration)   { c.historicalQueryTimeout = value }
+func (c Config) GetRecommendationJobTimeout() time.Duration       { return c.recommendationJobTimeout }
+func (c *Config) SetRecommendationJobTimeout(value time.Duration) { c.recommendationJobTimeout = value }
+func (c Config) GetDBTimeout() time.Duration                      { return c.dbTimeout }
+func (c *Config) SetDBTimeout(value time.Duration)                { c.dbTimeout = value }
+func (c Config) GetShutdownTimeout() time.Duration                { return c.shutdownTimeout }
+func (c *Config) SetShutdownTimeout(value time.Duration)          { c.shutdownTimeout = value }
+func (c Config) GetFrontendPollInterval() time.Duration           { return c.frontendPollInterval }
+func (c *Config) SetFrontendPollInterval(value time.Duration)     { c.frontendPollInterval = value }
 
 func Load() (Config, error) { return Parse(os.LookupEnv) }
 
@@ -37,7 +85,7 @@ func Parse(lookup func(string) (string, bool)) (Config, error) {
 	if err := p.loadDurations(&c); err != nil {
 		return c, err
 	}
-	return c, c.validate()
+	return c, nil
 }
 
 type environmentParser struct {
@@ -46,67 +94,50 @@ type environmentParser struct {
 }
 
 func (p *environmentParser) get(key, fallback string) string {
-	if value, ok := p.lookup(key); ok {
-		return value
+	value, ok := p.lookup(key)
+	if !ok {
+		value = fallback
 	}
-	return fallback
+	if strings.TrimSpace(value) == "" {
+		p.err = fmt.Errorf("%s is required", key)
+	}
+	return value
 }
 
 func (p *environmentParser) duration(key, fallback string) time.Duration {
 	value, err := time.ParseDuration(p.get(key, fallback))
-	if err != nil || value <= 0 {
-		p.err = fmt.Errorf("%s must be a positive duration", key)
+	if err != nil {
+		p.err = fmt.Errorf("%s must be a duration", key)
 	}
 	return value
 }
 
 func (p *environmentParser) integer(key, fallback string) int {
 	value, err := strconv.Atoi(p.get(key, fallback))
-	if err != nil || value <= 0 {
-		p.err = fmt.Errorf("%s must be a positive integer", key)
+	if err != nil {
+		p.err = fmt.Errorf("%s must be an integer", key)
 	}
 	return value
 }
 
-func (p *environmentParser) floatPointer(key, fallback string) float64 {
+func (p *environmentParser) number(key, fallback string) float64 {
 	value, err := strconv.ParseFloat(p.get(key, fallback), 64)
-	if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		p.err = fmt.Errorf("%s must be finite and positive", key)
+	if err != nil {
+		p.err = fmt.Errorf("%s must be a number", key)
 	}
 	return value
 }
 
 func (p *environmentParser) loadConnections(c *Config) error {
-	c.ListenAddr = p.get("LISTEN_ADDR", ":8080")
-	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
-		return fmt.Errorf("invalid LISTEN_ADDR: %w", err)
+	c.listenAddr = p.get("LISTEN_ADDR", ":8080")
+	c.databaseURL = p.get("DATABASE_URL", "")
+	c.forecastURL = p.get("FORECAST_API_URL", "https://api.open-meteo.com/v1/forecast")
+	timezone := p.get("CITY_TIMEZONE", "America/New_York")
+	if p.err != nil {
+		return p.err
 	}
-	c.DatabaseURL = p.get("DATABASE_URL", "")
-	if c.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
-	}
-	u, err := url.Parse(c.DatabaseURL)
-	if err != nil || u.Host == "" || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
-		return fmt.Errorf("DATABASE_URL must be a PostgreSQL URL")
-	}
-	if err := p.loadForecastURL(c); err != nil {
-		return err
-	}
-	return p.loadTimezone(c)
-}
-
-func (p *environmentParser) loadForecastURL(c *Config) error {
-	c.ForecastURL = p.get("FORECAST_API_URL", "https://api.open-meteo.com/v1/forecast")
-	u, err := url.Parse(c.ForecastURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return fmt.Errorf("FORECAST_API_URL must be an HTTP(S) URL")
-	}
-	return nil
-}
-
-func (p *environmentParser) loadTimezone(c *Config) error {
 	var err error
-	c.Location, err = time.LoadLocation(p.get("CITY_TIMEZONE", "America/New_York"))
+	c.location, err = time.LoadLocation(timezone)
 	if err != nil {
 		return fmt.Errorf("CITY_TIMEZONE: %w", err)
 	}
@@ -114,14 +145,11 @@ func (p *environmentParser) loadTimezone(c *Config) error {
 }
 
 func (p *environmentParser) loadScoringAndWeather(c *Config) error {
-	c.MinHistoricalSamples = p.integer("MIN_HISTORICAL_SAMPLES", "5")
-	c.MinRainfallMM = p.floatPointer("MIN_RAINFALL_MM", "0.5")
-	c.MinAdditionalTripsPerHour = p.floatPointer("MIN_ADDITIONAL_TRIPS_PER_HOUR", "50")
-	c.ForecastHours = p.integer("WEATHER_FORECAST_HOURS", "30")
-	if c.ForecastHours > 383 {
-		return fmt.Errorf("WEATHER_FORECAST_HOURS must leave room for the extra boundary hour within the provider's 384-hour limit")
-	}
-	c.MaxAttempts = p.integer("MAX_ATTEMPTS", "3")
+	c.minHistoricalSamples = p.integer("MIN_HISTORICAL_SAMPLES", "5")
+	c.minRainfallMM = p.number("MIN_RAINFALL_MM", "0.5")
+	c.minAdditionalTripsPerHour = p.number("MIN_ADDITIONAL_TRIPS_PER_HOUR", "50")
+	c.forecastHours = p.integer("WEATHER_FORECAST_HOURS", "30")
+	c.maxAttempts = p.integer("MAX_ATTEMPTS", "3")
 	return p.err
 }
 
@@ -130,39 +158,22 @@ func (p *environmentParser) loadDurations(c *Config) error {
 		key, fallback string
 		target        *time.Duration
 	}{
-		{"RECOMMENDATION_WINDOW", "2h", &c.Window},
-		{"RECOMMENDATION_REFRESH_INTERVAL", "1h", &c.RecommendationRefresh},
-		{"WEATHER_REFRESH_INTERVAL", "3h", &c.WeatherRefresh},
-		{"SCHEDULER_CHECK_INTERVAL", "15m", &c.SchedulerCheck},
-		{"WEATHER_MAX_STALENESS", "6h", &c.WeatherMaxStaleness},
-		{"HTTP_ATTEMPT_TIMEOUT", "10s", &c.HTTPAttemptTimeout},
-		{"EXTERNAL_REQUEST_TIMEOUT", "20s", &c.ExternalRequestTimeout},
-		{"RETRY_DELAY", "1s", &c.RetryDelay},
-		{"WEATHER_JOB_TIMEOUT", "2m", &c.WeatherJobTimeout},
-		{"HISTORICAL_QUERY_TIMEOUT", "60s", &c.HistoricalQueryTimeout},
-		{"RECOMMENDATION_JOB_TIMEOUT", "30s", &c.RecommendationJobTimeout},
-		{"DB_TIMEOUT", "15s", &c.DBTimeout},
-		{"SHUTDOWN_TIMEOUT", "15s", &c.ShutdownTimeout},
-		{"FRONTEND_POLL_INTERVAL", "60s", &c.FrontendPollInterval},
+		{"RECOMMENDATION_WINDOW", "2h", &c.window},
+		{"RECOMMENDATION_REFRESH_INTERVAL", "1h", &c.recommendationRefresh},
+		{"WEATHER_REFRESH_INTERVAL", "3h", &c.weatherRefresh},
+		{"SCHEDULER_CHECK_INTERVAL", "15m", &c.schedulerCheck},
+		{"WEATHER_MAX_STALENESS", "6h", &c.weatherMaxStaleness},
+		{"HTTP_ATTEMPT_TIMEOUT", "10s", &c.httpAttemptTimeout},
+		{"EXTERNAL_REQUEST_TIMEOUT", "20s", &c.externalRequestTimeout},
+		{"RETRY_DELAY", "1s", &c.retryDelay},
+		{"WEATHER_JOB_TIMEOUT", "2m", &c.weatherJobTimeout},
+		{"HISTORICAL_QUERY_TIMEOUT", "60s", &c.historicalQueryTimeout},
+		{"RECOMMENDATION_JOB_TIMEOUT", "30s", &c.recommendationJobTimeout},
+		{"DB_TIMEOUT", "15s", &c.dbTimeout},
+		{"SHUTDOWN_TIMEOUT", "15s", &c.shutdownTimeout},
+		{"FRONTEND_POLL_INTERVAL", "60s", &c.frontendPollInterval},
 	} {
 		*item.target = p.duration(item.key, item.fallback)
 	}
 	return p.err
-}
-
-func (c Config) validate() error {
-	if c.Window%time.Hour != 0 {
-		return fmt.Errorf("RECOMMENDATION_WINDOW must be whole hours")
-	}
-	// Compare without converting arbitrary user integers into overflowing durations.
-	if float64(c.ForecastHours) < c.Window.Hours()+c.WeatherMaxStaleness.Hours()+2 {
-		return fmt.Errorf("WEATHER_FORECAST_HOURS must cover window + max staleness + 2h")
-	}
-	if c.HTTPAttemptTimeout > c.ExternalRequestTimeout {
-		return fmt.Errorf("HTTP_ATTEMPT_TIMEOUT must not exceed EXTERNAL_REQUEST_TIMEOUT")
-	}
-	if c.WeatherRefresh > c.WeatherMaxStaleness {
-		return fmt.Errorf("WEATHER_REFRESH_INTERVAL must not exceed WEATHER_MAX_STALENESS")
-	}
-	return nil
 }

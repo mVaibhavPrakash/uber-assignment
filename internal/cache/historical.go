@@ -69,14 +69,7 @@ func cloneFloatPointer(value *float64) *float64 {
 
 func (s *HistoricalSnapshot) Get(key HistoricalKey) (repository.HourlyStats, bool) {
 	row, ok := s.statistics[key]
-	if !ok {
-		return repository.HourlyStats{}, false
-	}
-	return cloneHourlyStats(row), true
-}
-
-func (s *HistoricalSnapshot) Len() int {
-	return len(s.statistics)
+	return cloneHourlyStats(row), ok
 }
 
 func (s *HistoricalSnapshot) Coverage(minSamples int64) HistoricalCoverage {
