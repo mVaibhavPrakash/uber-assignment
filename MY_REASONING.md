@@ -70,7 +70,7 @@ Earlier verification covered rollback, retained forecasts on failures, cancellat
 |---|---|
 | Automatically optimize the historical period | Kept the period configurable and focused on a functional comparison rather than treating period selection as a validated optimization. |
 | Server-side Chicago aggregation instead of raw downloads | Tested the retrieval path; timeouts and an unavailable export endpoint contributed to the NYC Parquet decision. |
-| Combine preparation artifacts | Discussed separate area, trip and weather artifacts during preparation; the submitted runtime ultimately consumes one prepared seed. |
+| Combine preparation artifacts | Discussed separate area, trip and weather artifacts, initially used one nested JSON seed, then replaced it with two CSV files to simplify PostgreSQL setup. |
 | Fetch hourly because forecasts are hourly | Distinguished data resolution from fetch cadence; chose three-hour weather refresh and hourly recommendation updates. |
 | Generic 15-minute or arbitrary-duration buckets | Questioned the benefit when both historical preparation and provider data are hourly; retained configurable whole-hour windows. |
 | Retain raw timestamps and add 15-minute outputs | Deferred them because finer mobility granularity would not establish finer weather information. |
@@ -88,7 +88,7 @@ The submitted seed contains 20 manually selected NYC zones and 697,440 matched h
 
 Chicago TNP was explored first, but bounded retrieval experiments encountered timeouts for daily counts and weekly aggregation. NYC downloadable Parquet data provided a practical preparation path. Those experiments informed source selection; they do not establish that every Chicago retrieval method would fail or that NYC is universally faster.
 
-I chose Go for offline preparation and editable zone metadata rather than Python preparation or automated coordinate discovery. Downloading, aggregation and mandatory-field cleanup remain outside the submitted runtime. Setup consumes prepared JSON and copies it transactionally into PostgreSQL. This avoids repeating a large preparation pipeline during reviewer startup while preserving valid zero values and nullable optional measurements.
+I chose Go for offline preparation and editable zone metadata rather than Python preparation or automated coordinate discovery. Downloading, aggregation and mandatory-field cleanup remain outside the submitted runtime. Setup now imports two prepared CSV files transactionally through `psql`, replacing the initial JSON loader. This avoids repeating a large preparation pipeline during reviewer startup while preserving valid zero values and nullable optional measurements.
 
 ## Historical comparison and scoring
 
@@ -147,11 +147,21 @@ Validation performed during development included Go tests, vet/build, frontend b
 
 ## Reviewer setup and local debugging
 
-Reviewer setup also changed in response to practical failures. The prepared seed exceeded GitHub's regular per-file limit, so it moved to Git LFS. The documented setup command pulls LFS data before building and seeding. Database credentials were removed from Go and Compose defaults; local-only examples remain in `.env.example`.
+Reviewer setup also changed in response to practical failures. The original JSON seed exceeded GitHub's regular per-file limit, so it initially moved to Git LFS and setup pulled LFS data before building. The later CSV conversion described below removed that requirement for the current dataset. Database credentials were removed from Go and Compose defaults; local-only examples remain in `.env.example`.
 
 The first rain demo reused the normal API/UI ports. When it collided with an existing backend, I separated the sample onto 8081/3001 so it could run alongside the normal application on 8080/3000. An interrupted `npm ci` also exposed a Windows file lock: a running Vite preview held `esbuild.exe`, leaving dependencies partly removed. Stopping that project process and reinstalling repaired it; the instructions now distinguish initial installation from ordinary startup.
 
 For terminal debugging, I retained PostgreSQL in Docker and exposed it only on localhost, avoiding the need to discover credentials for a separately installed PostgreSQL instance. Windows blocked the first chosen port, 5433, so the mapping changed to the verified available port 15432. Existing database data was preserved, and the historical SQL integration test passed through the host connection. The Go backend can then run in a terminal or debugger using the same assignment database.
+
+## Replacing the JSON loader with CSV imports
+
+I questioned the amount of Go seeding code needed for an already-prepared dataset. The JSON loader still decoded nested records, maintained seed-specific types, built batches and converted rows before using PostgreSQL COPY. Preparing files in the format PostgreSQL could consume directly removed that intermediate application layer.
+
+The JSON was converted once to `areas.csv` and `historical_observations.csv`. All 697,440 observation records passed a CSV round-trip hash comparison of every imported field. The prepared data shrank from about 230 MB of JSON to 46 MB of CSV and now fits in regular Git. The original JSON remains in an ignored local archive; it is not included alongside the new seed.
+
+I replaced the Go seed command and package with `database/seed.psql`, run by the PostgreSQL client image. It checks the dedicated database/schema, serializes setup with a transaction advisory lock, refuses existing data by default, applies the migration when needed and imports both files in one transaction. CSV headers must match the expected columns, null measurements use an explicit marker, and malformed imports fail rather than silently skip rows. The API image now contains only the application, not seed files or a seed executable.
+
+Reset remains explicit but now recreates the three assignment tables inside the import transaction instead of dropping the database. It refuses other connected clients. This allows failed reset/import attempts to roll back the prior tables and data together. It also makes setup intentionally PostgreSQL-specific. Recommendation scoring, historical grouping and forecast behavior are unchanged.
 
 ## Technical challenges and remaining limits
 

@@ -131,14 +131,6 @@ func CommitForecast(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// Keeps a failed seed commit explicit so it is inspected before retrying.
-func CommitSeed(ctx context.Context, tx pgx.Tx) error {
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit seed (outcome may be ambiguous; inspect before retry): %w", err)
-	}
-	return nil
-}
-
 // Asks the caller to reload a saved version after an uncertain commit.
 // If reloading fails, discard the cached result. Never repeat the database write.
 func ReloadAfterUncertainForecastCommit(ctx context.Context, timeout time.Duration, version string, original error, reload func(context.Context) (string, error), invalidate func()) error {

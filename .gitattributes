@@ -1,1 +1,2 @@
-data/public/seed.json filter=lfs diff=lfs merge=lfs -text
+# Prepared CSV files stay byte-for-byte consistent and are too large for useful diffs.
+data/public/*.csv -diff -text

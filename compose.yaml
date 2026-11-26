@@ -33,11 +33,17 @@ services:
     depends_on:
       - api
   setup:
-    build: .
-    entrypoint: ["seed"]
-    command: ["-reset", "-data", "/data/public"]
+    image: postgres:17.7-alpine
+    working_dir: /workspace
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'exec psql "$$DATABASE_URL" -X -v reset="$$RESET_SEED" -f database/seed.psql'
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in your local .env or environment}
+      RESET_SEED: "false"
+    volumes:
+      - ./database:/workspace/database:ro
+      - ./data/public:/workspace/data/public:ro
     depends_on:
       db:
         condition: service_healthy

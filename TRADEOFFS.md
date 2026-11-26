@@ -26,6 +26,8 @@ With partial coverage and no qualifying action, the UI states that no assessed z
 
 ## Scheduling and storage decisions
 
+Prepared CSV files replace the original nested JSON seed. PostgreSQL's `psql` client imports them directly, removing the Go JSON reader, batching and seed-specific types. The smaller files fit in regular Git, and the API image no longer contains seed data or a seeding executable. This makes setup PostgreSQL-specific and requires the `psql` client or its Docker image. Explicit reset recreates only the assignment tables, within the import transaction, rather than dropping the database; default setup refuses existing data. Import failures roll back schema changes and both CSV loads.
+
 | Decision | Reason | Accepted limitation |
 |---|---|---|
 | Assess the next two complete future hours | Keeps forecast intervals aligned with full hourly historical observations. | The result does not cover the remainder of the current hour. At 10:53, the window is 11:00-13:00, not a remaining-time estimate. |

@@ -10,25 +10,25 @@ Rain below the configured threshold (default 0.5 mm/hour), including light rain,
 
 Copy `.env.example` to `.env` before starting. The example includes credentials for the local assignment database and uses the Compose host `db`. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. The `.env` file is ignored by Git.
 
-From a Git clone of the repository, with Git LFS installed and Docker Compose available. The setup command downloads the LFS dataset before building and seeding:
+From a Git clone of the repository with Docker Compose available. Prepared CSV files are included in regular Git; Git LFS and historical downloads are not required for setup:
 
 ```sh
-git lfs pull && docker compose run --rm --build setup
+docker compose run --rm setup
 docker compose up --build api frontend
 ```
 
-Open http://localhost:3000. The API is at http://localhost:8080/api/recommendations. **Setup resets the dedicated assignment database. Stop the application first and never use setup against a database whose contents you need to preserve.** Normal startup does not reset data. The Docker setup/build/start workflow was verified on November 26, 2026.
+Open http://localhost:3000. The API is at http://localhost:8080/api/recommendations. Setup refuses nonempty or partial assignment tables by default; normal startup never resets data. To intentionally reload the sample dataset, stop the API and other database clients, then run `docker compose run --rm -e RESET_SEED=true setup`. **Reset recreates the three assignment tables in `mobility_control_room` and erases their contents.** It does not drop the database or force clients off it.
 
-After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check Docker, Compose configuration, the served frontend and the API through Nginx. The check never resets data. It reports a weather-related HTTP 503 for review rather than treating it as a normal recommendation. The backend image includes only the prepared seed JSON, not original download artifacts.
+After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check Docker, Compose configuration, the served frontend and the API through Nginx. The check never resets data. It reports a weather-related HTTP 503 for review rather than treating it as a normal recommendation. The API image contains neither seed data nor a seed executable. The separate setup service uses PostgreSQL's `psql` client and reads CSV files through read-only mounts.
 
-For local development, use Go 1.25+, PostgreSQL and Node.js 22. Configure environment variables using [.env.example](.env.example), using your local database host instead of `db`. Go requires `DATABASE_URL` in the process environment and does not load `.env` itself. Compose reads `.env` or exported environment variables and rejects missing database settings.
+For local development, use Go 1.25+, PostgreSQL 17+, its `psql` client, and Node.js 22. Configure environment variables using [.env.example](.env.example), using your local database host instead of `db`. The dedicated `mobility_control_room` database must already exist. Go requires `DATABASE_URL` in the process environment and does not load `.env` itself. Compose reads `.env` or exported environment variables and rejects missing database settings.
 
 ```sh
-git lfs pull && go run ./cmd/seed -data data/public
+psql "$DATABASE_URL" -X -f database/seed.psql
 go run ./cmd/server
 ```
 
-Seeding requires an empty database; the explicit `-reset` option recreates the dedicated assignment database. In another terminal:
+The example above uses Git Bash. In PowerShell, use `psql $env:DATABASE_URL -X -f database/seed.psql`. Run setup only for empty assignment tables. For an intentional reset, add `-v reset=true` before `-f`; this requires other clients to be stopped. Both imports and any schema changes are committed together, and import failures roll them back. In another terminal:
 
 ```sh
 cd frontend
@@ -49,7 +49,7 @@ docker compose up -d db
 docker compose stop api
 ```
 
-For an already seeded database, do not run setup or seed again. For a first-time empty database, use the setup command in the Run section before starting the local backend; setup resets the dedicated assignment database.
+For an already seeded database, do not run setup again. For a first-time empty database, use the setup command in the Run section before starting the local backend. The default setup does not reset existing data.
 
 In PowerShell, read the connection URL from `.env` and change only the host and port for this terminal:
 
@@ -70,7 +70,7 @@ The API runs at http://localhost:8080. The normal local frontend (`npm run dev`)
 
 ## Try a rainy recommendation in the UI
 
-This separate local harness uses fictional inputs with the existing scoring engine and API handlers. It needs Go 1.25+ and Node.js 22; Docker, PostgreSQL, Git LFS data and live weather are unnecessary. The sample uses API port **8081** and UI port **3001**, so the normal application on ports 8080/3000 can keep running.
+This separate local harness uses fictional inputs with the existing scoring engine and API handlers. It needs Go 1.25+ and Node.js 22; Docker, PostgreSQL, seed data and live weather are unnecessary. The sample uses API port **8081** and UI port **3001**, so the normal application on ports 8080/3000 can keep running.
 
 From the repository root, start the sample API:
 

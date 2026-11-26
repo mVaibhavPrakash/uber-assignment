@@ -23,7 +23,7 @@ flowchart LR
     DB -->|Startup SQL aggregation| History[Historical statistics cache]
     History --> Recommendation
     Weather -->|Committed forecast snapshot| Recommendation
-    Seed[Setup: prepared seed.json] -->|Transactional COPY| DB
+    Seed[Setup: prepared CSV files] -->|Transactional psql COPY| DB
 ```
 
 The startup path loads zones and historical SQL statistics from PostgreSQL and restores the last persisted forecast. The scheduler then fetches weather and computes a recommendation. A successful weather refresh commits a complete snapshot before publishing it to the in-memory cache; failed requests retain the previous snapshot within its freshness limits. API requests read the current result rather than fetching weather or scanning historical data.
@@ -31,7 +31,7 @@ The startup path loads zones and historical SQL statistics from PostgreSQL and r
 | Location | Responsibility |
 |---|---|
 | `cmd/server/` | Wire dependencies, start HTTP/scheduler, handle graceful shutdown. |
-| `cmd/seed/`, `internal/seeding/` | Explicit database initialization from cleaned JSON using a transaction and bounded COPY batches. |
+| `database/seed.psql`, `database/migrations/` | PostgreSQL setup, schema creation and transactional CSV imports with explicit reset and existing-data protection. |
 | `internal/api/` | HTTP routing, status codes and read-only response preparation in `response.go`. |
 | `internal/recommendation/` | Pure hourly/window scoring, decision selection, immutable-result publication, validity checks and integer JSON formatting. |
 | `internal/history/`, `internal/cache/` | Reusable historical lookups and in-memory snapshots. |
@@ -67,7 +67,7 @@ Usable recommendations, including insufficient evidence, return 200; unavailable
 
 Source references: [NYC TLC trip records and High Volume FHV data dictionary](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) and [Open-Meteo forecast API documentation](https://open-meteo.com/en/docs). The bundled seed is a prepared hourly aggregation, not the original trip-level download.
 
-`data/public/seed.json` contains 20 selected zones and 697,440 matched hourly observations from NYC TLC HVFHV trips and historical weather for 2022–2025. Initialization decodes the already-cleaned JSON and copies observations into PostgreSQL in one transaction, without repeating preparation-time field validation. Downloading, aggregation and null-field cleanup tools remain separate in the ignored `data-preparation/` folder, excluded from the Docker build and unnecessary at startup. Optional weather measurements may remain null; mandatory null or missing fields are removed offline before publishing the seed.
+`data/public/areas.csv` and `historical_observations.csv` contain 20 selected zones and 697,440 matched hourly observations from NYC TLC HVFHV trips and historical weather for 2022–2025. The separate setup service runs `database/seed.psql` with PostgreSQL's client image and read-only data mounts. Two `\copy` statements import the prepared CSV files, with header/column matching, in the same transaction as schema creation or an explicit reset. Setup serializes through a transaction advisory lock, rejects existing data by default, and restricts execution to the dedicated database and public schema. Explicit reset recreates only the three assignment tables and refuses other connected clients. Import failures roll back both data and schema changes. The API image does not contain seed files or a Go seed command. Downloading, aggregation and cleanup remain offline; optional measurements use an explicit CSV null marker while zero values stay zero.
 
 PostgreSQL stores areas, historical observations and hourly forecasts. The repository performs meaningful SQL aggregation and comparison: below-threshold/rainy averages, counts, rainy-hour sample standard deviation, and absolute/percentage differences grouped by zone, season, weekday and New York hour. Snow is excluded. Unknown statistics remain null. Go loads the reusable historical statistics at startup.
 

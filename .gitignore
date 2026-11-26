@@ -12,7 +12,8 @@
 !/data/README.md
 !/data/public/
 /data/public/*
-!/data/public/seed.json
+!/data/public/areas.csv
+!/data/public/historical_observations.csv
 *.parquet
 
 # Local databases, browser profiles, verification output and generated fixtures.

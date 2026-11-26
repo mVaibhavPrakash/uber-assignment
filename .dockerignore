@@ -5,6 +5,7 @@
 data/checkpoints
 data-preparation
 data/public/seed.cleaned.json
+data/public/
 data/pilot
 data/synthetic
 data/taxi_zone_lookup.csv
