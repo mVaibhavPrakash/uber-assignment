@@ -6,10 +6,10 @@ A weather-informed mobility dashboard for 20 selected NYC taxi zones. It shows o
 
 Copy `.env.example` to `.env` before starting. The example includes credentials for the local assignment database and uses the Compose host `db`. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. The `.env` file is ignored by Git.
 
-From the repository root with Docker Compose:
+From a Git clone of the repository, with Git LFS installed and Docker Compose available. The setup command downloads the LFS dataset before building and seeding:
 
 ```sh
-docker compose run --rm --build setup
+git lfs pull && docker compose run --rm --build setup
 docker compose up --build api frontend
 ```
 
@@ -20,7 +20,7 @@ After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check
 For local development, use Go 1.25+, PostgreSQL and Node.js 22. Configure environment variables using [.env.example](.env.example), using your local database host instead of `db`. Go requires `DATABASE_URL` in the process environment and does not load `.env` itself. Compose reads `.env` or exported environment variables and rejects missing database settings.
 
 ```sh
-go run ./cmd/seed -data data/public
+git lfs pull && go run ./cmd/seed -data data/public
 go run ./cmd/server
 ```
 
