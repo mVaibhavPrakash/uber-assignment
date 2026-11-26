@@ -1,7 +1,7 @@
 ﻿import type { Recommendation } from '../types/recommendation';
 
 // Keep warnings focused on the information a controller needs before acting.
-function contextualWarnings(result: Recommendation) {
+function buildDecisionWarnings(result: Recommendation) {
   const items = [{ title: 'Weather changes', text: result.freshness === 'stale'
     ? 'The forecast is older than the normal refresh interval. Check current local conditions before acting.'
     : 'Unexpected rainfall or local differences within a zone could change the estimated trip volume.' }];
@@ -18,7 +18,7 @@ function contextualWarnings(result: Recommendation) {
 export default function Uncertainty({ result }: { result: Recommendation }) {
   return <section className="uncertainty" aria-labelledby="uncertainty-title">
     <h2 id="uncertainty-title"><span aria-hidden="true">△</span> What could change this decision?</h2>
-    <ul className="context-warnings">{contextualWarnings(result).map(item =>
+    <ul className="context-warnings">{buildDecisionWarnings(result).map(item =>
       <li key={item.title}><strong>{item.title}:</strong> {item.text}</li>)}</ul>
   </section>;
 }

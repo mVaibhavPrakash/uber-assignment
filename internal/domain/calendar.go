@@ -4,9 +4,9 @@ package domain
 
 import "time"
 
-// Calendar returns the local date (encoded as a UTC date), meteorological
+// LocalCalendarFields returns the local date (encoded as a UTC date), meteorological
 // season (winter=1), ISO weekday (Monday=1) and local hour.
-func Calendar(at time.Time, loc *time.Location) (date time.Time, season, day, hour int) {
+func LocalCalendarFields(at time.Time, loc *time.Location) (date time.Time, season, day, hour int) {
 	local := at.In(loc)
 	date = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
 	season = int(local.Month())%12/3 + 1

@@ -41,7 +41,7 @@ func NewService(areas repository.AreaRepository, forecasts repository.ForecastRe
 	return &Service{areas: areas, forecasts: forecasts, provider: provider, config: c, now: clock}
 }
 
-func (s *Service) Restore(ctx context.Context) error {
+func (s *Service) RestoreSavedForecast(ctx context.Context) error {
 	areas, err := s.areas.ListAreas(ctx)
 	if err != nil {
 		return fmt.Errorf("restore forecast scope: %w", err)
@@ -61,7 +61,7 @@ func (s *Service) Restore(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Refresh(ctx context.Context) error {
+func (s *Service) FetchAndPublishForecast(ctx context.Context) error {
 	if !s.refresh.TryLock() {
 		return apperrors.ErrWeatherRefreshBusy
 	}
@@ -80,8 +80,8 @@ func (s *Service) Refresh(ctx context.Context) error {
 	}
 	if err = s.forecasts.ReplaceSnapshot(ctx, snapshot); err != nil {
 		if errors.Is(err, apperrors.ErrCommitAmbiguous) {
-			return apperrors.ReconcileCommit(ctx, s.config.DBTimeout, snapshot.Version, err,
-				func(ctx context.Context) (string, error) { return s.reloadForecast(ctx, areas) }, s.store.Clear)
+			return apperrors.ReloadAfterUncertainForecastCommit(ctx, s.config.DBTimeout, snapshot.Version, err,
+				func(ctx context.Context) (string, error) { return s.reloadAndPublishSavedForecast(ctx, areas) }, s.store.Clear)
 		}
 		return err
 	}
@@ -89,7 +89,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Current(now time.Time) (View, error) {
+func (s *Service) CurrentForecast(now time.Time) (View, error) {
 	snapshot, ok := s.store.Get()
 	if !ok {
 		return View{Freshness: "unavailable"}, apperrors.ErrNoSnapshot
@@ -101,7 +101,7 @@ func (s *Service) Current(now time.Time) (View, error) {
 	}
 	start := now.UTC().Truncate(time.Hour).Add(time.Hour)
 	end := start.Add(s.config.Window)
-	first, last := forecastBounds(snapshot.Hours)
+	first, last := coveredHourRange(snapshot.Hours)
 	if first.After(start) || last.Before(end.Add(-time.Hour)) {
 		view.Freshness = "unavailable"
 		return view, apperrors.ErrForecastCoverage
@@ -114,7 +114,7 @@ func (s *Service) Current(now time.Time) (View, error) {
 }
 
 // Finds the first and last hours covered by a complete snapshot.
-func forecastBounds(hours []repository.ForecastHour) (time.Time, time.Time) {
+func coveredHourRange(hours []repository.ForecastHour) (time.Time, time.Time) {
 	first, last := hours[0].HourStart, hours[0].HourStart
 	for _, h := range hours {
 		if h.HourStart.Before(first) {
@@ -128,7 +128,7 @@ func forecastBounds(hours []repository.ForecastHour) (time.Time, time.Time) {
 }
 
 // Reads and publishes the saved snapshot after an uncertain commit.
-func (s *Service) reloadForecast(ctx context.Context, areas []repository.Area) (string, error) {
+func (s *Service) reloadAndPublishSavedForecast(ctx context.Context, areas []repository.Area) (string, error) {
 	snapshot, err := s.forecasts.LoadLatest(ctx)
 	if err != nil {
 		return "", err

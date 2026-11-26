@@ -19,9 +19,9 @@ func recommendationInput(t *testing.T) (time.Time, recommendation.Options, []rec
 	now := time.Date(2026, 11, 25, 16, 20, 0, 0, time.UTC)
 	options := recommendation.Options{Window: 2 * time.Hour, MinSamples: 5, RainThreshold: 0.5, AdditionalPerHour: 50, Location: location}
 	area := recommendation.AreaInput{Area: repository.Area{ID: 7, Name: "Astoria"}}
-	window := recommendation.PlanningWindow(now, options.Window)
+	window := recommendation.NextFullHourWindow(now, options.Window)
 	for at := window.Start; at.Before(window.End); at = at.Add(time.Hour) {
-		_, season, day, hour := domain.Calendar(at, location)
+		_, season, day, hour := domain.LocalCalendarFields(at, location)
 		dry, rain := 1200.0, 1700.0
 		area.Hours = append(area.Hours, recommendation.HourInput{At: at, Forecast: &repository.ForecastHour{AreaID: 7, HourStart: at, RainMM: 1, PrecipitationProbability: 90}, History: &repository.HourlyStats{AreaID: 7, Season: season, DayOfWeek: day, HourOfDay: hour, DryMean: &dry, RainMean: &rain, DrySamples: 5, RainSamples: 5}})
 	}
@@ -32,10 +32,11 @@ func recommendationInput(t *testing.T) (time.Time, recommendation.Options, []rec
 }
 
 func TestRecommendationMessages(t *testing.T) {
+	t.Run("read_only_cache_and_response_preparation", checkRecommendationCache)
 	t.Run("whole_trips_in_json_without_changing_scoring", func(t *testing.T) {
 		now, options, inputs := recommendationInput(t)
 		*inputs[0].Hours[0].History.DryMean = 1200.25
-		result, err := recommendation.Score(now, options, inputs)
+		result, err := recommendation.EvaluatePlanningWindow(now, options, inputs)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +135,7 @@ func TestRecommendationMessages(t *testing.T) {
 			if test.prepare != nil {
 				inputs = test.prepare(&options, inputs)
 			}
-			result, err := recommendation.Score(now, options, inputs)
+			result, err := recommendation.EvaluatePlanningWindow(now, options, inputs)
 			if err != nil {
 				t.Fatal(err)
 			}

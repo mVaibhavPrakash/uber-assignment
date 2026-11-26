@@ -11,7 +11,7 @@ import (
 
 // Prevents concurrent setup, then creates or checks the tables.
 func prepareSeedSchema(ctx context.Context, tx pgx.Tx) error {
-	if err := lockSeed(ctx, tx); err != nil {
+	if err := lockSeedTransaction(ctx, tx); err != nil {
 		return err
 	}
 	tables, err := countSeedTables(ctx, tx)
@@ -29,7 +29,7 @@ func prepareSeedSchema(ctx context.Context, tx pgx.Tx) error {
 }
 
 // lockSeed allows only one seed transaction to initialize the tables at a time.
-func lockSeed(ctx context.Context, tx pgx.Tx) error {
+func lockSeedTransaction(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(73192027)")
 	if err != nil {
 		return fmt.Errorf("lock seed: %w", err)

@@ -31,20 +31,20 @@ type seedReader struct {
 }
 
 // The prepared file contains just areas and records, with no provenance envelope.
-func openSeed(path string) (*seedReader, error) {
+func openSeedRecords(path string) (*seedReader, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	r := &seedReader{file: file, decoder: json.NewDecoder(file)}
-	if err := r.readHeader(); err != nil {
+	if err := r.readAreasAndOpenRecords(); err != nil {
 		file.Close()
 		return nil, err
 	}
 	return r, nil
 }
 
-func (r *seedReader) expect(want json.Token) error {
+func (r *seedReader) expectJSONToken(want json.Token) error {
 	token, err := r.decoder.Token()
 	if err != nil {
 		return err
@@ -55,24 +55,23 @@ func (r *seedReader) expect(want json.Token) error {
 	return nil
 }
 
-func (r *seedReader) readHeader() error {
-	if err := r.expect(json.Delim('{')); err != nil {
-		return err
-	}
-	if err := r.expect("areas"); err != nil {
-		return err
+func (r *seedReader) readAreasAndOpenRecords() error {
+	for _, token := range []json.Token{json.Delim('{'), "areas"} {
+		if err := r.expectJSONToken(token); err != nil {
+			return err
+		}
 	}
 	if err := r.decoder.Decode(&r.areas); err != nil {
 		return err
 	}
-	if err := r.expect("records"); err != nil {
+	if err := r.expectJSONToken("records"); err != nil {
 		return err
 	}
-	return r.expect(json.Delim('['))
+	return r.expectJSONToken(json.Delim('['))
 }
 
-func SeedHeader(dir string) (Summary, error) {
-	r, err := openSeed(filepath.Join(dir, "seed.json"))
+func ReadSeedAreas(dir string) (Summary, error) {
+	r, err := openSeedRecords(filepath.Join(dir, "seed.json"))
 	if err != nil {
 		return Summary{}, err
 	}
@@ -81,8 +80,8 @@ func SeedHeader(dir string) (Summary, error) {
 }
 
 // Streams the already-cleaned JSON into storage without repeating preparation checks.
-func ScanSeed(ctx context.Context, path string, consume func(Observation) error) (s Summary, err error) {
-	r, err := openSeed(path)
+func StreamSeedObservations(ctx context.Context, path string, consume func(Observation) error) (s Summary, err error) {
+	r, err := openSeedRecords(path)
 	if err != nil {
 		return s, err
 	}
@@ -103,18 +102,18 @@ func ScanSeed(ctx context.Context, path string, consume func(Observation) error)
 		}
 		s.Matched++
 	}
-	if err := r.finish(); err != nil {
+	if err := r.validateJSONEnd(); err != nil {
 		return s, err
 	}
 	return s, nil
 }
 
 // finish checks that the records array and JSON object end cleanly.
-func (r *seedReader) finish() error {
-	if err := r.expect(json.Delim(']')); err != nil {
+func (r *seedReader) validateJSONEnd() error {
+	if err := r.expectJSONToken(json.Delim(']')); err != nil {
 		return err
 	}
-	if err := r.expect(json.Delim('}')); err != nil {
+	if err := r.expectJSONToken(json.Delim('}')); err != nil {
 		return err
 	}
 	var trailing any

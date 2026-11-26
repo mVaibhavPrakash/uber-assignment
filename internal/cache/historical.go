@@ -44,21 +44,22 @@ func NewHistorical(areas []repository.Area, rows []repository.HourlyStats) (*His
 		if _, exists := snapshot.statistics[key]; exists {
 			return nil, fmt.Errorf("duplicate historical calendar key %+v", key)
 		}
-		snapshot.statistics[key] = copyStats(row)
+		snapshot.statistics[key] = cloneHourlyStats(row)
 	}
 	return snapshot, nil
 }
 
-func copyStats(row repository.HourlyStats) repository.HourlyStats {
-	row.DryMean = copyFloat(row.DryMean)
-	row.RainMean = copyFloat(row.RainMean)
-	row.AbsoluteUplift = copyFloat(row.AbsoluteUplift)
-	row.PercentageUplift = copyFloat(row.PercentageUplift)
-	row.RainStdDev = copyFloat(row.RainStdDev)
+func cloneHourlyStats(row repository.HourlyStats) repository.HourlyStats {
+	row.DryMean = cloneFloatPointer(row.DryMean)
+	row.RainMean = cloneFloatPointer(row.RainMean)
+	row.AbsoluteUplift = cloneFloatPointer(row.AbsoluteUplift)
+	row.PercentageUplift = cloneFloatPointer(row.PercentageUplift)
+	row.RainStdDev = cloneFloatPointer(row.RainStdDev)
 	return row
 }
 
-func copyFloat(value *float64) *float64 {
+// Copy an existing number so changing it cannot change the cached value.
+func cloneFloatPointer(value *float64) *float64 {
 	if value == nil {
 		return nil
 	}
@@ -71,7 +72,7 @@ func (s *HistoricalSnapshot) Get(key HistoricalKey) (repository.HourlyStats, boo
 	if !ok {
 		return repository.HourlyStats{}, false
 	}
-	return copyStats(row), true
+	return cloneHourlyStats(row), true
 }
 
 func (s *HistoricalSnapshot) Len() int {

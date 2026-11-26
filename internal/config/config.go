@@ -68,7 +68,7 @@ func (p *environmentParser) integer(key, fallback string) int {
 	return value
 }
 
-func (p *environmentParser) number(key, fallback string) float64 {
+func (p *environmentParser) floatPointer(key, fallback string) float64 {
 	value, err := strconv.ParseFloat(p.get(key, fallback), 64)
 	if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		p.err = fmt.Errorf("%s must be finite and positive", key)
@@ -81,7 +81,10 @@ func (p *environmentParser) loadConnections(c *Config) error {
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		return fmt.Errorf("invalid LISTEN_ADDR: %w", err)
 	}
-	c.DatabaseURL = p.get("DATABASE_URL", "postgres://mobility:mobility@localhost:5432/mobility_control_room?sslmode=disable")
+	c.DatabaseURL = p.get("DATABASE_URL", "")
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
 	u, err := url.Parse(c.DatabaseURL)
 	if err != nil || u.Host == "" || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
 		return fmt.Errorf("DATABASE_URL must be a PostgreSQL URL")
@@ -111,17 +114,9 @@ func (p *environmentParser) loadTimezone(c *Config) error {
 }
 
 func (p *environmentParser) loadScoringAndWeather(c *Config) error {
-	p.loadScoring(c)
-	return p.loadWeather(c)
-}
-
-func (p *environmentParser) loadScoring(c *Config) {
 	c.MinHistoricalSamples = p.integer("MIN_HISTORICAL_SAMPLES", "5")
-	c.MinRainfallMM = p.number("MIN_RAINFALL_MM", "0.5")
-	c.MinAdditionalTripsPerHour = p.number("MIN_ADDITIONAL_TRIPS_PER_HOUR", "50")
-}
-
-func (p *environmentParser) loadWeather(c *Config) error {
+	c.MinRainfallMM = p.floatPointer("MIN_RAINFALL_MM", "0.5")
+	c.MinAdditionalTripsPerHour = p.floatPointer("MIN_ADDITIONAL_TRIPS_PER_HOUR", "50")
 	c.ForecastHours = p.integer("WEATHER_FORECAST_HOURS", "30")
 	if c.ForecastHours > 383 {
 		return fmt.Errorf("WEATHER_FORECAST_HOURS must leave room for the extra boundary hour within the provider's 384-hour limit")
@@ -152,10 +147,7 @@ func (p *environmentParser) loadDurations(c *Config) error {
 	} {
 		*item.target = p.duration(item.key, item.fallback)
 	}
-	if p.err != nil {
-		return p.err
-	}
-	return nil
+	return p.err
 }
 
 func (c Config) validate() error {

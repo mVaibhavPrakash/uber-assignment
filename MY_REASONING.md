@@ -14,6 +14,8 @@
 
 **Most challenging implementation areas:** preparing and aligning historical mobility/weather hours with New York calendar fields; balancing seasonal relevance against sparse rainy-hour evidence; preserving the distinction between missing data and observed zero; and keeping forecast persistence, cached recommendations, expiry and frontend insights tied to the same version/window during refreshes and failures.
 
+**Cache simplification:** Instead of deep-copying every recommendation read, implemented simpler model. The refinement keeps published recommendations read-only and moves summary shaping and stale-warning lists into the API layer. Refreshes atomically replace the cached result; version/window/expiry checks remain. The existing recommendation test was extended to cover repeated summaries followed by insights, unchanged cached warnings, concurrent refresh/read behavior, version changes and expiry. The read-only rule is an internal contract, not a Go language guarantee; historical/forecast cache protections remain unchanged.
+
 ## Earlier discussions and decisions
 
 The following notes preserve the original planning and implementation history, including rejected approaches and checks that were pending at the time. They are not the current implementation status. For current behavior, see [DESIGN_AND_SCALABILITY.md](DESIGN_AND_SCALABILITY.md).

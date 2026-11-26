@@ -1,6 +1,10 @@
 # Operations Control Room - implementation plan
 
-Standalone brief for a fresh Codex session. Status: design only; no implementation, tests or benchmarks claimed. Read this entire file before editing. For each task propose files, approach and acceptance checks, wait for approval, implement only that task, run checks and report results, then wait again. Keep the assignment within 8–10 hours of active engineering; downloads may take longer.
+This file preserves the original implementation plan and alternatives. The application is now implemented; use [README.md](README.md) and [DESIGN_AND_SCALABILITY.md](DESIGN_AND_SCALABILITY.md) for current setup and architecture. Earlier proposed preparation, quota and UI details below may have been superseded by later user decisions.
+
+## Current recommendation cache design
+
+Compute a complete result and atomically publish it. Published nested data is read-only: `Service.Current` returns a small value containing shared evidence and current freshness, without deep cloning. The API prepares summaries in `internal/api/response.go`, copying only area headers before omitting hourly details and allocating a separate warning list for stale responses. Insights read cached hourly evidence directly. Keep precise scoring, integer JSON output and all forecast version/window/expiry checks. Use one shared validity rule for reads and scheduler decisions. Retain historical and forecast cache ownership protections. Extend the existing recommendation test for cache isolation, repeated requests, stale warnings, concurrent refreshes, version changes and expiry; keep three top-level tests.
 
 ## 1. Assignment and product
 Source: `Take Home Exercise_ Operations Control Room (Full Stack) (1) 2.pdf` (three pages). Mandatory: Go backend, public mobility dataset and one live API, simple relational database (2–3 tables), schema or migrations, meaningful SQL aggregation/comparison/ranking, minimal frontend, 2–3 focused tests. React/TS recommended. One current actionable recommendation, evidence, explanation and uncertainty; explain no intervention when appropriate. No general dashboard. Reviewer must run in one or two commands. Submit accessible repository, README, dependencies/config/schema, screenshot/demo, architecture and SQL explanation, limitations/trade-offs and AI disclosure. AI disclosure: tools/uses, accepted and rejected or changed suggestions, validation, risks and challenging parts. Follow-up includes demo, architecture/SQL explanation and small change/debugging. Advanced SQL and deployment optional.
@@ -28,7 +32,7 @@ TRADEOFFS.md
 MY_REASONING.md
 AGENTS.md
 ```
-Use explicit dependency injection, small repository/weather/cache interfaces and pure scoring. Cache interface Get/Set/Delete with context, TTL, bounded memory and safe copies if using byte slices; no Redis implementation. Use typed immutable snapshots for coherent publication.
+Use explicit dependency injection, small repository/weather/cache interfaces and pure scoring. Use typed immutable snapshots for coherent publication; no generic byte-cache or Redis implementation is needed. Recommendation reads share read-only evidence and prepare API responses separately; historical/forecast cache ownership remains protected.
 
 ### 2.1 Repository boundary (required)
 Use small domain-oriented interfaces, not a generic CRUD repository or a database abstraction that exposes SQL. Define domain structs and repository contracts in `internal/repository` (or consumer-owned interfaces with shared domain types in `internal/domain`); implement only PostgreSQL in `internal/repository/postgres`. `internal/database` owns pool creation and lifecycle. The composition root `cmd/server` constructs the adapter and injects interfaces into services. API handlers call services; the scorer is pure and receives typed evidence, never a database connection. Scheduler orchestrates services, not queries.

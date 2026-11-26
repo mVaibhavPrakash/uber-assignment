@@ -14,15 +14,15 @@ import (
 // Supplies the zones and historical statistics loaded from PostgreSQL.
 type HistoricalEvidence interface {
 	Areas() []repository.Area
-	Lookup(int, time.Time) (repository.HourlyStats, bool)
+	LookupComparableHour(int, time.Time) (repository.HourlyStats, bool)
 }
 
 // Supplies the latest usable weather snapshot.
 type ForecastEvidence interface {
-	Current(time.Time) (weather.View, error)
+	CurrentForecast(time.Time) (weather.View, error)
 }
 
-// Prepares scoring inputs and keeps the latest result for API requests.
+// Prepares scoring inputs and atomically publishes a read-only result for API requests.
 type Service struct {
 	history HistoricalEvidence
 	weather ForecastEvidence
@@ -46,24 +46,24 @@ func (s *Service) Areas() []repository.Area {
 }
 
 // Builds and saves one recommendation result for the current planning window.
-func (s *Service) Compute(ctx context.Context, now time.Time) error {
+func (s *Service) ComputeAndPublish(ctx context.Context, now time.Time) error {
 	// Step 1: Stop if cancelled, then get the latest usable weather.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	view, err := s.weather.Current(now)
+	view, err := s.weather.CurrentForecast(now)
 	if err != nil {
-		result := s.unavailable(now, view)
+		result := s.newUnavailableResult(now, view)
 		s.result.Store(&result)
 		return fmt.Errorf("recommendation forecast: %w", err)
 	}
 	// Step 2: Pair forecast hours with the historical statistics for each zone.
-	inputs, err := s.buildInputs(ctx, view.Snapshot.Hours, PlanningWindow(now, s.options.Window))
+	inputs, err := s.joinForecastAndHistory(ctx, view.Snapshot.Hours, NextFullHourWindow(now, s.options.Window))
 	if err != nil {
 		return err
 	}
 	// Step 3: Calculate the estimates and choose an action or a no-action message.
-	result, err := Score(now, s.options, inputs)
+	result, err := EvaluatePlanningWindow(now, s.options, inputs)
 	if err != nil {
 		return err
 	}
@@ -86,26 +86,22 @@ func (s *Service) Compute(ctx context.Context, now time.Time) error {
 }
 
 // Returns the saved result only while its weather, window and expiry still match.
-// It never fetches weather or recalculates scores during an API request.
-func (s *Service) Current(now time.Time) Result {
-	view, err := s.weather.Current(now)
+// Nested slices and pointers are shared and must never be modified by readers.
+// Only the small result value is copied to report current freshness.
+func (s *Service) CurrentRecommendation(now time.Time) Result {
+	view, err := s.weather.CurrentForecast(now)
 	cached := s.result.Load()
-	window := PlanningWindow(now, s.options.Window)
-	if err != nil || cached == nil || cached.ForecastVersion != view.Version || !cached.Window.Start.Equal(window.Start) || !now.Before(cached.ValidUntil) {
-		return s.unavailable(now, view)
+	if err != nil || !s.matchesForecastWindowAndExpiry(cached, view.Version, now) {
+		return s.newUnavailableResult(now, view)
 	}
-	// Return a copy so response formatting cannot change the saved result.
-	result := cloneResult(*cached)
+	result := *cached
 	result.Freshness = view.Freshness
-	if view.Freshness == "stale" {
-		result.Warnings = append(result.Warnings, "The weather forecast is older than the normal refresh interval. Conditions may have changed; check current weather before acting.")
-	}
 	return result
 }
 
 // Tells the scheduler when weather, the planning window or expiry changed.
-func (s *Service) NeedsCompute(now time.Time) bool {
-	view, err := s.weather.Current(now)
+func (s *Service) NeedsRecompute(now time.Time) bool {
+	view, err := s.weather.CurrentForecast(now)
 	cached := s.result.Load()
 	if cached == nil {
 		return true
@@ -113,7 +109,13 @@ func (s *Service) NeedsCompute(now time.Time) bool {
 	if err != nil {
 		return cached.Status != "unavailable"
 	}
-	return cached.ForecastVersion != view.Version || !cached.Window.Start.Equal(PlanningWindow(now, s.options.Window).Start) || !now.Before(cached.ValidUntil)
+	return !s.matchesForecastWindowAndExpiry(cached, view.Version, now)
+}
+
+// One validity rule is shared by API reads and the scheduler.
+func (s *Service) matchesForecastWindowAndExpiry(result *Result, version string, now time.Time) bool {
+	return result != nil && result.ForecastVersion == version &&
+		result.Window.Start.Equal(NextFullHourWindow(now, s.options.Window).Start) && now.Before(result.ValidUntil)
 }
 
 type forecastKey struct {
@@ -122,7 +124,7 @@ type forecastKey struct {
 }
 
 // Joins forecast hours with matching historical evidence in memory.
-func (s *Service) buildInputs(ctx context.Context, hours []repository.ForecastHour, window Window) ([]AreaInput, error) {
+func (s *Service) joinForecastAndHistory(ctx context.Context, hours []repository.ForecastHour, window Window) ([]AreaInput, error) {
 	// Step 1: Index forecasts by zone and hour so each lookup is quick.
 	scope := s.history.Areas()
 	forecast := map[forecastKey]repository.ForecastHour{}
@@ -143,7 +145,7 @@ func (s *Service) buildInputs(ctx context.Context, hours []repository.ForecastHo
 			if f, ok := forecast[forecastKey{area.ID, at.Unix()}]; ok {
 				hour.Forecast = &f
 			}
-			if stats, ok := s.history.Lookup(area.ID, at); ok {
+			if stats, ok := s.history.LookupComparableHour(area.ID, at); ok {
 				hour.History = &stats
 			}
 			input.Hours = append(input.Hours, hour)
@@ -154,8 +156,8 @@ func (s *Service) buildInputs(ctx context.Context, hours []repository.ForecastHo
 }
 
 // Creates a response with no action when a current result cannot be used.
-func (s *Service) unavailable(now time.Time, view weather.View) Result {
-	result := newResult(now, s.options, len(s.history.Areas()))
+func (s *Service) newUnavailableResult(now time.Time, view weather.View) Result {
+	result := newPlanningWindowResult(now, s.options, len(s.history.Areas()))
 	result.Status = "unavailable"
 	result.DecisionReason = ReasonRecommendationUnavailable
 	result.Message = apperrors.RecommendationUnavailable.Message

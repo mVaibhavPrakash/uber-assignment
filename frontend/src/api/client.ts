@@ -1,6 +1,6 @@
 import type { Insights, Recommendation } from '../types/recommendation';
 
-export async function getRecommendation(signal: AbortSignal): Promise<Recommendation> {
+export async function fetchRecommendation(signal: AbortSignal): Promise<Recommendation> {
   const response = await fetch('/api/recommendations', { signal, cache: 'no-store' });
   // An unavailable recommendation still has a useful status and explanation.
   if (!response.ok && response.status !== 503) {
@@ -9,7 +9,7 @@ export async function getRecommendation(signal: AbortSignal): Promise<Recommenda
   return response.json();
 }
 
-export async function getInsights(
+export async function fetchMatchingInsights(
   areaID: number,
   result: Recommendation,
   signal: AbortSignal,

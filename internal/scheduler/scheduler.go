@@ -12,12 +12,12 @@ import (
 )
 
 type Weather interface {
-	Refresh(context.Context) error
+	FetchAndPublishForecast(context.Context) error
 }
 
 type Recommendations interface {
-	Compute(context.Context, time.Time) error
-	NeedsCompute(time.Time) bool
+	ComputeAndPublish(context.Context, time.Time) error
+	NeedsRecompute(time.Time) bool
 }
 
 type JobState struct {
@@ -52,7 +52,7 @@ func (s *Scheduler) State() State {
 	return s.state
 }
 
-func (s *Scheduler) record(weatherJob bool, attempt, success time.Time, err error) {
+func (s *Scheduler) recordJobOutcome(weatherJob bool, attempt, success time.Time, err error) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	job := &s.state.Recommendation
@@ -80,14 +80,14 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	now := s.clock()
 	refreshed := false
 	if state.Weather.LastAttempt.IsZero() || now.Sub(state.Weather.LastAttempt) >= s.config.WeatherRefresh {
-		refreshed = s.refreshWeather(ctx, now)
+		refreshed = s.runWeatherRefreshJob(ctx, now)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	now = s.clock()
-	if refreshed || state.Recommendation.LastAttempt.IsZero() || now.Sub(state.Recommendation.LastAttempt) >= s.config.RecommendationRefresh || s.recommendations.NeedsCompute(now) {
-		s.computeRecommendation(ctx, now)
+	if refreshed || state.Recommendation.LastAttempt.IsZero() || now.Sub(state.Recommendation.LastAttempt) >= s.config.RecommendationRefresh || s.recommendations.NeedsRecompute(now) {
+		s.runRecommendationJob(ctx, now)
 	}
 	return nil
 }
@@ -117,12 +117,12 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// Rruns one bounded weather job and records its outcome.
-func (s *Scheduler) refreshWeather(ctx context.Context, now time.Time) bool {
+// Runs one bounded weather job and records its outcome.
+func (s *Scheduler) runWeatherRefreshJob(ctx context.Context, now time.Time) bool {
 	job, cancel := context.WithTimeout(ctx, s.config.WeatherJobTimeout)
 	defer cancel()
-	err := s.weather.Refresh(job)
-	s.record(true, now, s.clock(), err)
+	err := s.weather.FetchAndPublishForecast(job)
+	s.recordJobOutcome(true, now, s.clock(), err)
 	if err != nil {
 		slog.Error("weather job failed", "op", "weather_refresh", "error", err)
 	}
@@ -130,11 +130,11 @@ func (s *Scheduler) refreshWeather(ctx context.Context, now time.Time) bool {
 }
 
 // Runs one bounded scoring job and records its outcome.
-func (s *Scheduler) computeRecommendation(ctx context.Context, now time.Time) {
+func (s *Scheduler) runRecommendationJob(ctx context.Context, now time.Time) {
 	job, cancel := context.WithTimeout(ctx, s.config.RecommendationJobTimeout)
 	defer cancel()
-	err := s.recommendations.Compute(job, now)
-	s.record(false, now, s.clock(), err)
+	err := s.recommendations.ComputeAndPublish(job, now)
+	s.recordJobOutcome(false, now, s.clock(), err)
 	if err != nil {
 		slog.Error("recommendation job failed", "op", "recommendation_refresh", "error", err)
 	}

@@ -86,7 +86,7 @@ func initializeServices(ctx context.Context, adapter *postgres.Repository, cfg c
 	}
 	forecasts := weather.NewService(adapter, adapter, provider, cfg, time.Now)
 	loadCtx, cancelLoad := context.WithTimeout(ctx, cfg.DBTimeout)
-	err = forecasts.Restore(loadCtx)
+	err = forecasts.RestoreSavedForecast(loadCtx)
 	cancelLoad()
 	if err != nil {
 		return nil, nil, fmt.Errorf("restore weather: %w", err)

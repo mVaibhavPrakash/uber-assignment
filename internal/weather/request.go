@@ -15,7 +15,7 @@ import (
 
 // Calls the endpoint up to MaxAttempts times. Temporary failures wait
 // longer after each attempt; permanent errors stop immediately.
-func (c *Client) request(ctx context.Context, params url.Values) ([]byte, error) {
+func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.ExternalRequestTimeout)
 	defer cancel()
 	endpoint, err := url.Parse(c.config.ForecastURL)
@@ -25,7 +25,7 @@ func (c *Client) request(ctx context.Context, params url.Values) ([]byte, error)
 	endpoint.RawQuery = params.Encode()
 	delay := min(c.config.RetryDelay, c.config.ExternalRequestTimeout)
 	for attempt := 1; attempt <= c.config.MaxAttempts; attempt++ {
-		body, retryAfter, err := c.requestOnce(ctx, endpoint.String())
+		body, retryAfter, err := c.sendForecastRequest(ctx, endpoint.String())
 		if err == nil {
 			return body, nil
 		}
@@ -33,10 +33,10 @@ func (c *Client) request(ctx context.Context, params url.Values) ([]byte, error)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !apperrors.IsTransient(err) || attempt == c.config.MaxAttempts {
+		if !apperrors.IsRetryableWeatherError(err) || attempt == c.config.MaxAttempts {
 			return nil, fmt.Errorf("fetch weather: %w", err)
 		}
-		if err := wait(ctx, retryPause(delay, retryAfter)); err != nil {
+		if err := waitForRetryOrCancellation(ctx, retryDelayWithJitter(delay, retryAfter)); err != nil {
 			return nil, err
 		}
 		// Double the next delay, capped at the total request timeout.
@@ -48,14 +48,14 @@ func (c *Client) request(ctx context.Context, params url.Values) ([]byte, error)
 // Picks a random wait between half and all of the current delay.
 // With a 1s starting delay, retries wait 0.5–1s, then 1–2s.
 // A longer Retry-After from the provider always takes priority.
-func retryPause(delay, retryAfter time.Duration) time.Duration {
+func retryDelayWithJitter(delay, retryAfter time.Duration) time.Duration {
 	jittered := time.Duration(float64(delay) * (0.5 + rand.Float64()*0.5))
 	return max(jittered, retryAfter)
 }
 
 // Sends one GET with a timeout. It returns the response body or
 // the provider error and how long the provider asks us to wait before retrying.
-func (c *Client) requestOnce(ctx context.Context, endpoint string) ([]byte, time.Duration, error) {
+func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]byte, time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.HTTPAttemptTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -68,7 +68,7 @@ func (c *Client) requestOnce(ctx context.Context, endpoint string) ([]byte, time
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, parseRetryAfter(response.Header.Get("Retry-After")), apperrors.ProviderFailure(response)
+		return nil, parseRetryAfter(response.Header.Get("Retry-After")), apperrors.ReadProviderError(response)
 	}
 	const maxBytes = 8 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
@@ -91,7 +91,7 @@ func parseRetryAfter(value string) time.Duration {
 }
 
 // Pauses before the next attempt, stopping early if the request is cancelled.
-func wait(ctx context.Context, delay time.Duration) error {
+func waitForRetryOrCancellation(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {

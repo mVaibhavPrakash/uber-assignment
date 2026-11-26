@@ -15,46 +15,46 @@ type Options struct {
 	Location                         *time.Location
 }
 
-// Validate checks that the scoring settings are usable before calculations begin.
+// It checks that the scoring settings are usable before calculations begin.
 func (o Options) Validate() error {
-	if o.Window <= 0 || o.Window%time.Hour != 0 || o.MinSamples <= 0 || !positive(o.RainThreshold) || !positive(o.AdditionalPerHour) || o.Location == nil {
+	if o.Window <= 0 || o.Window%time.Hour != 0 || o.MinSamples <= 0 || !isFinitePositive(o.RainThreshold) || !isFinitePositive(o.AdditionalPerHour) || o.Location == nil {
 		return fmt.Errorf("invalid recommendation options: positive whole-hour window, samples, finite thresholds and timezone required")
 	}
 	return nil
 }
 
-// positive rejects zero, negative numbers and values that cannot be used in calculations.
-func positive(v float64) bool {
+// It rejects zero, negative numbers and values that cannot be used in calculations.
+func isFinitePositive(v float64) bool {
 	return v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
-// HourInput pairs one forecast hour with comparable historical trips. Missing evidence is nil.
+// It pairs one forecast hour with comparable historical trips. Missing evidence is nil.
 type HourInput struct {
 	At       time.Time
 	Forecast *repository.ForecastHour
 	History  *repository.HourlyStats
 }
 
-// AreaInput contains all planning-window hours for one zone.
+// It contains all planning-window hours for one zone.
 type AreaInput struct {
 	Area  repository.Area
 	Hours []HourInput
 }
 
-// Window describes the future hours covered by the recommendation.
+// It describes the future hours covered by the recommendation.
 type Window struct {
 	Start           time.Time `json:"start"`
 	End             time.Time `json:"end"`
 	DurationSeconds int64     `json:"duration_seconds"`
 }
 
-// Coverage reports how many zones have enough evidence for every hour in the window.
+// It reports how many zones have enough evidence for every hour in the window.
 type Coverage struct {
 	Assessed int `json:"assessed"`
 	Total    int `json:"total"`
 }
 
-// HourEvidence explains the inputs and estimated trips for one hour, or why it could not be scored.
+// It explains the inputs and estimated trips for one hour, or why it could not be scored.
 type HourEvidence struct {
 	HourStart                  time.Time                `json:"hour_start"`
 	Season                     int                      `json:"season"`
@@ -74,7 +74,7 @@ type HourEvidence struct {
 	Reason                     string                   `json:"reason,omitempty"`
 }
 
-// AreaEvidence contains a zone's hourly evidence and totals for the full window.
+// It contains a zone's hourly evidence and totals for the full window.
 type AreaEvidence struct {
 	Area           repository.Area `json:"area"`
 	Assessable     bool            `json:"assessable"`
@@ -86,7 +86,7 @@ type AreaEvidence struct {
 	Hourly         []HourEvidence  `json:"hourly,omitempty"`
 }
 
-// DecisionReason explains the existing decision without changing its eligibility rules.
+// It explains the existing decision without changing its eligibility rules.
 type DecisionReason string
 
 const (
@@ -99,7 +99,7 @@ const (
 	ReasonNoOperationalAreas        DecisionReason = "no_operational_areas"
 )
 
-// Result is the recommendation shown to users, together with evidence and expiry details.
+// It is the recommendation shown to users, together with evidence and expiry details.
 type Result struct {
 	Status                   string         `json:"status"`
 	DecisionReason           DecisionReason `json:"decision_reason"`

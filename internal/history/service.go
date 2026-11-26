@@ -49,8 +49,8 @@ func (s *Service) Areas() []repository.Area {
 	return append([]repository.Area(nil), s.areas...)
 }
 
-func (s *Service) Lookup(areaID int, at time.Time) (repository.HourlyStats, bool) {
-	_, season, day, hour := domain.Calendar(at, s.location)
+func (s *Service) LookupComparableHour(areaID int, at time.Time) (repository.HourlyStats, bool) {
+	_, season, day, hour := domain.LocalCalendarFields(at, s.location)
 	return s.statistics.Get(cache.HistoricalKey{AreaID: areaID, Season: season, DayOfWeek: day, HourOfDay: hour})
 }
 

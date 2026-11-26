@@ -89,7 +89,7 @@ func (e *providerError) Error() string {
 }
 
 // Identifies HTTP 408/429/5xx and temporary network failures worth retrying.
-func IsTransient(err error) bool {
+func IsRetryableWeatherError(err error) bool {
 	var provider *providerError
 	if errors.As(err, &provider) {
 		return provider.status == 408 || provider.status == 429 || provider.status >= 500 && provider.status <= 599
@@ -99,7 +99,7 @@ func IsTransient(err error) bool {
 }
 
 // Reads a bounded error reason from an unsuccessful API response.
-func ProviderFailure(response *http.Response) error {
+func ReadProviderError(response *http.Response) error {
 	var failure struct {
 		Reason string `json:"reason"`
 	}
@@ -142,7 +142,7 @@ func CommitSeed(ctx context.Context, tx pgx.Tx) error {
 
 // Asks the caller to reload a saved version after an uncertain commit.
 // If reloading fails, discard the cached result. Never repeat the database write.
-func ReconcileCommit(ctx context.Context, timeout time.Duration, version string, original error, reload func(context.Context) (string, error), invalidate func()) error {
+func ReloadAfterUncertainForecastCommit(ctx context.Context, timeout time.Duration, version string, original error, reload func(context.Context) (string, error), invalidate func()) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	savedVersion, err := reload(ctx)

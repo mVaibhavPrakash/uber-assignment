@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // ValidateForecast requires a complete rectangular scope and contiguous UTC
 // hours. It validates every write independently of database constraints.
@@ -21,11 +21,11 @@ func ValidateForecast(s repository.ForecastSnapshot, areas []repository.Area) er
 	if s.FetchedAt.IsZero() || len(s.Hours) == 0 || len(areas) == 0 {
 		return fmt.Errorf("forecast metadata/scope is empty")
 	}
-	known, err := forecastAreaIDs(areas)
+	known, err := validateAndIndexForecastAreas(areas)
 	if err != nil {
 		return err
 	}
-	periods, err := collectForecastPeriods(s.Hours, known)
+	periods, err := validateRowsAndCollectCoverage(s.Hours, known)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ type forecastPeriod struct {
 }
 
 // Identifies the zones a forecast is allowed to contain.
-func forecastAreaIDs(areas []repository.Area) (map[int]bool, error) {
+func validateAndIndexForecastAreas(areas []repository.Area) (map[int]bool, error) {
 	known := map[int]bool{}
 	for _, a := range areas {
 		if a.ID <= 0 || known[a.ID] {
@@ -67,14 +67,14 @@ func forecastAreaIDs(areas []repository.Area) (map[int]bool, error) {
 }
 
 // Checks rows and counts unique hours for each zone.
-func collectForecastPeriods(hours []repository.ForecastHour, known map[int]bool) (map[int]forecastPeriod, error) {
+func validateRowsAndCollectCoverage(hours []repository.ForecastHour, known map[int]bool) (map[int]forecastPeriod, error) {
 	periods := map[int]forecastPeriod{}
 	seen := map[struct {
 		area int
 		hour int64
 	}]bool{}
 	for _, h := range hours {
-		if !known[h.AreaID] || h.HourStart.IsZero() || !h.HourStart.Equal(h.HourStart.Truncate(time.Hour)) || !finite(h.RainMM) || !finite(h.SnowfallCM) || h.RainMM < 0 || h.SnowfallCM < 0 || h.RainMM > math.MaxFloat32 || h.SnowfallCM > math.MaxFloat32 || h.PrecipitationProbability < 0 || h.PrecipitationProbability > 100 {
+		if !known[h.AreaID] || h.HourStart.IsZero() || !h.HourStart.Equal(h.HourStart.Truncate(time.Hour)) || !isFinite(h.RainMM) || !isFinite(h.SnowfallCM) || h.RainMM < 0 || h.SnowfallCM < 0 || h.RainMM > math.MaxFloat32 || h.SnowfallCM > math.MaxFloat32 || h.PrecipitationProbability < 0 || h.PrecipitationProbability > 100 {
 			return nil, fmt.Errorf("invalid forecast row for area %d", h.AreaID)
 		}
 		key := struct {

@@ -4,6 +4,8 @@ A weather-informed mobility dashboard for 20 selected NYC taxi zones. It shows o
 
 ## Run
 
+Copy `.env.example` to `.env` before starting. The example includes credentials for the local assignment database and uses the Compose host `db`. If you change `POSTGRES_PASSWORD`, update the URL-encoded password in `DATABASE_URL` to match. The `.env` file is ignored by Git.
+
 From the repository root with Docker Compose:
 
 ```sh
@@ -15,7 +17,7 @@ Open http://localhost:3000. The API is at http://localhost:8080/api/recommendati
 
 After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check Docker, Compose configuration, the served frontend and the API through Nginx. The check never resets data. It reports a weather-related HTTP 503 for review rather than treating it as a normal recommendation. The backend image includes only the prepared seed JSON, not original download artifacts.
 
-For local development, use Go 1.25+, PostgreSQL and Node.js 22. Configure environment variables using [.env.example](.env.example). Go reads environment variables directly; Compose loads an optional `.env` file.
+For local development, use Go 1.25+, PostgreSQL and Node.js 22. Configure environment variables using [.env.example](.env.example), using your local database host instead of `db`. Go requires `DATABASE_URL` in the process environment and does not load `.env` itself. Compose reads `.env` or exported environment variables and rejects missing database settings.
 
 ```sh
 go run ./cmd/seed -data data/public
@@ -35,6 +37,8 @@ The frontend proxies requests to port 8080. It refreshes every 60 seconds and su
 ## Architecture
 
 React/TypeScript is served by Nginx, which proxies API requests to Go. The Go application loads historical SQL statistics from PostgreSQL, periodically fetches and persists Open-Meteo forecasts, and computes one current recommendation. A one-shot setup container loads the prepared seed; no historical downloads are required at startup.
+
+Each completed recommendation is published atomically and then treated as read-only. API handlers prepare summaries without changing cached hourly evidence; readers do not deep-copy the full recommendation. Version, window and expiry checks still run on every read.
 
 See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#architecture), [data and scoring](DESIGN_AND_SCALABILITY.md#data-and-decisions), and [database design and SQL](DESIGN_AND_SCALABILITY.md#database-design-and-important-sql) for the detailed flow, endpoints and implementation.
 
@@ -75,3 +79,5 @@ npm run build --prefix frontend
 ```
 
 Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include SQL verification. That test creates/removes its own temporary schema and skips without the variable. Docker setup was also verified from a clean copy with no local dependencies/build artifacts and a new database volume.
+
+The existing recommendation test also checks read-only cache behavior, summary/insight consistency, stale warnings, concurrent reads during refresh, version changes and expiry. These checks passed Go's race detector in a temporary Linux container. The suite still has three top-level tests.

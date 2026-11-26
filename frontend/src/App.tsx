@@ -3,7 +3,7 @@ import DecisionCard, { ForecastBadge } from './components/DecisionCard';
 import EvidencePanel from './components/EvidencePanel';
 import Uncertainty from './components/Uncertainty';
 import { useInsights, useRecommendation } from './state/hooks';
-import { areaName, date } from './utils/presentation';
+import { formatAreaName, formatNewYorkTime } from './utils/presentation';
 
 export default function App() {
   const { result, loading, error, expired, refresh } = useRecommendation();
@@ -23,7 +23,7 @@ export default function App() {
         <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
     </header>
     <p className="scope-note">This decision concerns weather-related trip activity, not the overall health of marketplace operations.</p>
-    {result && <p className="planning-window"><span aria-hidden="true">◷</span> {date(result.window.start)} – {date(result.window.end)} · New York</p>}
+    {result && <p className="planning-window"><span aria-hidden="true">◷</span> {formatNewYorkTime(result.window.start)} – {formatNewYorkTime(result.window.end)} · New York</p>}
     {error && <p className="notice" role="alert">{error}</p>}
     {loading && !result && !error && <p role="status">Loading the current recommendation…</p>}
     {expired && <p className="notice" role="status">The previous decision has expired. Waiting for a current result; no action is shown.</p>}
@@ -33,7 +33,7 @@ export default function App() {
       <h2 id="evidence-title">Supporting evidence</h2>
       <div className="zone-selection"><label htmlFor="area" className="sr-only">Inspect a monitored zone</label>
         <select id="area" value={areaID ?? ''} onChange={event => setSelection({ decision, id: Number(event.target.value) })}>
-          {result.areas.map(item => <option key={item.area.id} value={item.area.id}>{areaName(item.area.name)}</option>)}
+          {result.areas.map(item => <option key={item.area.id} value={item.area.id}>{formatAreaName(item.area.name)}</option>)}
         </select><span className="muted">Selected zone</span></div>
       {detail.error ? <p role="alert">{detail.error}</p>
         : detail.insights ? <EvidencePanel evidence={detail.insights.evidence} result={result} />

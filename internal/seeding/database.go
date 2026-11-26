@@ -11,13 +11,12 @@ type seedWriter struct{ tx pgx.Tx }
 
 // Inserts the zone list before observations reference it.
 func (w seedWriter) CopyAreas(ctx context.Context, input []Area) error {
-	var err error
-	areas := make([][]any, 0, len(input))
-	for _, a := range input {
-		areas = append(areas, []any{a.ID, a.Name, a.Latitude, a.Longitude})
-	}
 	columns := []string{"id", "name", "latitude", "longitude"}
-	if _, err = w.tx.CopyFrom(ctx, pgx.Identifier{"community_areas"}, columns, pgx.CopyFromRows(areas)); err != nil {
+	_, err := w.tx.CopyFrom(ctx, pgx.Identifier{"community_areas"}, columns, pgx.CopyFromSlice(len(input), func(i int) ([]any, error) {
+		a := input[i]
+		return []any{a.ID, a.Name, a.Latitude, a.Longitude}, nil
+	}))
+	if err != nil {
 		return fmt.Errorf("copy areas: %w", err)
 	}
 	return nil

@@ -1,14 +1,14 @@
 import type { HourEvidence, Recommendation } from '../types/recommendation';
 
-export function number(value: number | null | undefined) {
+export function formatNumber(value: number | null | undefined) {
   return value == null ? 'Not available' : value.toLocaleString('en-US', { maximumFractionDigits: 1 });
 }
 
-export function signedNumber(value: number | null | undefined) {
-  return value == null ? 'Not available' : `${value > 0 ? '+' : ''}${number(value)}`;
+export function formatSignedNumber(value: number | null | undefined) {
+  return value == null ? 'Not available' : `${value > 0 ? '+' : ''}${formatNumber(value)}`;
 }
 
-export function date(value: string, includeDate = true) {
+export function formatNewYorkTime(value: string, includeDate = true) {
   return new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     ...(includeDate ? { month: 'short', day: 'numeric' } as const : {}),
@@ -16,17 +16,17 @@ export function date(value: string, includeDate = true) {
   }).format(new Date(value));
 }
 
-export function duration(result: Recommendation) {
+export function formatPlanningDuration(result: Recommendation) {
   const hours = result.window.duration_seconds / 3600;
-  return `${number(hours)} ${hours === 1 ? 'hour' : 'hours'}`;
+  return `${formatNumber(hours)} ${hours === 1 ? 'hour' : 'hours'}`;
 }
 
-export function areaName(name: string) {
+export function formatAreaName(name: string) {
   return name.replace(/\s*\(([^)]+)\)$/, ', $1');
 }
 
 // Explain the backend's assessment without reimplementing eligibility.
-export function assessment(hour: HourEvidence) {
+export function describeHourAssessment(hour: HourEvidence) {
   switch (hour.reason) {
     case 'missing_forecast': case 'invalid_forecast': return 'Forecast unavailable';
     case 'snow_not_supported': return 'Unsupported weather: snow';

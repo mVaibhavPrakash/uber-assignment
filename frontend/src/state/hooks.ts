@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getInsights, getRecommendation } from '../api/client';
+import { fetchMatchingInsights, fetchRecommendation } from '../api/client';
 import type { Insights, Recommendation } from '../types/recommendation';
 
 // Poll the API and hide saved recommendations as soon as their validity ends.
@@ -17,7 +17,7 @@ export function useRecommendation() {
     setLoading(true);
     setError('');
     try {
-      const next = await getRecommendation(controller.signal);
+      const next = await fetchRecommendation(controller.signal);
       if (!controller.signal.aborted) {
         setNow(Date.now());
         setResult(next);
@@ -73,7 +73,7 @@ export function useInsights(
     setError('');
     if (!result || result.status === 'unavailable' || expired || areaID === null) return;
     const controller = new AbortController();
-    void getInsights(areaID, result, controller.signal).then(next => {
+    void fetchMatchingInsights(areaID, result, controller.signal).then(next => {
       if (controller.signal.aborted) return;
       if (next === null) {
         void refresh();

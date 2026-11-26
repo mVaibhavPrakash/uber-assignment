@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: mobility_control_room
       POSTGRES_USER: mobility
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mobility}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your local .env or environment}
     volumes:
       - mobility_db:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgres://mobility:${POSTGRES_PASSWORD:-mobility}@db:5432/mobility_control_room?sslmode=disable
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in your local .env or environment}
     depends_on:
       db:
         condition: service_healthy
@@ -35,7 +35,7 @@ services:
     entrypoint: ["seed"]
     command: ["-reset", "-data", "/data/public"]
     environment:
-      DATABASE_URL: postgres://mobility:${POSTGRES_PASSWORD:-mobility}@db:5432/mobility_control_room?sslmode=disable
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in your local .env or environment}
     depends_on:
       db:
         condition: service_healthy

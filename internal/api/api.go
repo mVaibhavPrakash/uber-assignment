@@ -13,7 +13,8 @@ import (
 
 type Service interface {
 	Areas() []repository.Area
-	Current(time.Time) recommendation.Result
+	// It shares read-only nested data; response preparation must not mutate it.
+	CurrentRecommendation(time.Time) recommendation.Result
 }
 
 func Handler(service Service, clock func() time.Time) http.Handler {
@@ -48,26 +49,16 @@ func (h *handler) handleRecommendations(w http.ResponseWriter, r *http.Request) 
 		apperrors.WriteHTTPError(w, apperrors.QueryNotAllowed)
 		return
 	}
-	result := h.service.Current(h.clock())
-	status := 200
+	result := omitHourlyEvidence(h.service.CurrentRecommendation(h.clock()))
 	if result.Status == "unavailable" {
-		status = 503
 		result.ErrorCode = apperrors.RecommendationUnavailable.Code
-	}
-	for i := range result.Areas {
-		result.Areas[i].Hourly = nil
-	}
-	if result.Primary != nil {
-		result.Primary.Hourly = nil
-	}
-	if status == 503 {
-		writeJSON(w, status, struct {
+		writeJSON(w, 503, struct {
 			recommendation.Result
 			RequestID string `json:"request_id"`
 		}{result, w.Header().Get("X-Request-ID")})
-	} else {
-		writeJSON(w, status, result)
+		return
 	}
+	writeJSON(w, 200, result)
 }
 
 func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
@@ -87,17 +78,17 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 		apperrors.WriteHTTPError(w, apperrors.AreaNotFound)
 		return
 	}
-	result := h.service.Current(h.clock())
+	result := h.service.CurrentRecommendation(h.clock())
 	if result.Status == "unavailable" {
 		apperrors.WriteHTTPError(w, apperrors.CurrentInsightsUnavailable)
 		return
 	}
-	if !validateInsightQuery(w, r, result) {
+	if !validateInsightVersionAndWindow(w, r, result) {
 		return
 	}
 	for _, area := range result.Areas {
 		if area.Area.ID == id {
-			writeJSON(w, 200, map[string]any{"forecast_version": result.ForecastVersion, "forecast_fetched_at": result.ForecastFetchedAt, "generated_at": result.GeneratedAt, "valid_until": result.ValidUntil, "window": result.Window, "freshness": result.Freshness, "evidence": area, "warnings": result.Warnings})
+			writeJSON(w, 200, map[string]any{"forecast_version": result.ForecastVersion, "forecast_fetched_at": result.ForecastFetchedAt, "generated_at": result.GeneratedAt, "valid_until": result.ValidUntil, "window": result.Window, "freshness": result.Freshness, "evidence": area, "warnings": warningsWithForecastFreshness(result)})
 			return
 		}
 	}
@@ -105,7 +96,7 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
-	result := h.service.Current(h.clock())
+	result := h.service.CurrentRecommendation(h.clock())
 	status, state := 200, "ready"
 	if result.Status == "unavailable" {
 		status = 503
@@ -124,7 +115,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 // Keeps details tied to the forecast and window the user selected.
-func validateInsightQuery(w http.ResponseWriter, r *http.Request, result recommendation.Result) bool {
+func validateInsightVersionAndWindow(w http.ResponseWriter, r *http.Request, result recommendation.Result) bool {
 	query := r.URL.Query()
 	for key := range query {
 		if key != "forecast_version" && key != "window_start" {

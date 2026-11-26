@@ -5,3 +5,5 @@
 Download, aggregation and cleanup tools are kept in the ignored `data-preparation/` folder. Original inputs and reports are retained locally and excluded from Git. Mandatory null/missing fields are removed offline; optional weather measurements remain nullable. Valid zero trips and zero rainfall are retained.
 
 The cleanup script writes a separate output before replacing the application seed. Its last run retained every observation. The original seed remains in the ignored preparation archive.
+
+The recommendation service builds read-only cached results from database-derived historical statistics and persisted forecasts. API summary preparation does not change the seed, database observations or cached hourly evidence. The cache refactor leaves data cleanup and seeding unchanged.

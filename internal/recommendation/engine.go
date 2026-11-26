@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// PlanningWindow starts at the next full UTC hour, even when now is exactly on the hour.
-func PlanningWindow(now time.Time, duration time.Duration) Window {
+// It starts at the next full UTC hour, even when now is exactly on the hour.
+func NextFullHourWindow(now time.Time, duration time.Duration) Window {
 	start := now.UTC().Truncate(time.Hour).Add(time.Hour)
 	return Window{start, start.Add(duration), int64(duration / time.Second)}
 }
 
-// limitations explains why the estimate may be wrong and what it cannot tell us.
-func limitations() []string {
+// It explains why the estimate may be wrong and what it cannot tell us.
+func recommendationLimitations() []string {
 	return []string{
 		"This recommendation may be inaccurate if the rain forecast is wrong or weather differs within a zone. Check current local conditions before acting.",
 		"Historical trips from 2022–2025 may not reflect today's travel patterns. Holidays, major events, road closures, pricing and service disruptions are not included in the estimate.",
@@ -26,14 +26,14 @@ func limitations() []string {
 	}
 }
 
-// Score evaluates each zone, then chooses an action only when the entire scope
+// Itevaluates each zone, then chooses an action only when the entire scope
 // has enough evidence. It has no storage, network or cache side effects.
-func Score(now time.Time, options Options, inputs []AreaInput) (Result, error) {
+func EvaluatePlanningWindow(now time.Time, options Options, inputs []AreaInput) (Result, error) {
 	// Step 1: Check the scoring settings and create the planning window.
 	if err := options.Validate(); err != nil {
 		return Result{}, err
 	}
-	result := newResult(now, options, len(inputs))
+	result := newPlanningWindowResult(now, options, len(inputs))
 	if len(inputs) == 0 {
 		result.Status = "unavailable"
 		result.DecisionReason = ReasonNoOperationalAreas
@@ -48,7 +48,7 @@ func Score(now time.Time, options Options, inputs []AreaInput) (Result, error) {
 			return Result{}, fmt.Errorf("invalid or duplicate recommendation area")
 		}
 		seen[input.Area.ID] = true
-		area, missing := scoreArea(input, result.Window, options)
+		area, missing := estimateAreaWindow(input, result.Window, options)
 		missingForecast = missingForecast || missing
 		if area.Assessable {
 			result.Coverage.Assessed++
@@ -59,29 +59,29 @@ func Score(now time.Time, options Options, inputs []AreaInput) (Result, error) {
 	sort.Slice(result.Areas, func(i, j int) bool {
 		return result.Areas[i].Area.ID < result.Areas[j].Area.ID
 	})
-	chooseAction(&result, missingForecast)
+	selectScopeDecision(&result, missingForecast)
 	return result, nil
 }
 
 // Sets the window, expiry time and minimum extra trips needed to act.
 // For example, 50 extra trips per hour means a threshold of 100 for two hours.
-func newResult(now time.Time, options Options, areaCount int) Result {
+func newPlanningWindowResult(now time.Time, options Options, areaCount int) Result {
 	return Result{
 		Status:                   "no_intervention",
 		MinimumHistoricalSamples: options.MinSamples,
 		RainfallThresholdMM:      options.RainThreshold,
-		Window:                   PlanningWindow(now, options.Window),
+		Window:                   NextFullHourWindow(now, options.Window),
 		GeneratedAt:              now.UTC(),
 		ValidUntil:               now.UTC().Truncate(time.Hour).Add(time.Hour),
 		Coverage:                 Coverage{Total: areaCount},
 		Areas:                    make([]AreaEvidence, 0, areaCount),
 		Threshold:                options.AdditionalPerHour * options.Window.Hours(),
-		Warnings:                 limitations(),
+		Warnings:                 recommendationLimitations(),
 	}
 }
 
 // Adds up one zone's hourly estimates. The boolean reports missing or invalid weather.
-func scoreArea(input AreaInput, window Window, options Options) (AreaEvidence, bool) {
+func estimateAreaWindow(input AreaInput, window Window, options Options) (AreaEvidence, bool) {
 	// Step 1: Start with no trips counted and assume every hour can be assessed.
 	area := AreaEvidence{
 		Area: input.Area, Assessable: true, Reasons: []string{},
@@ -96,7 +96,7 @@ func scoreArea(input AreaInput, window Window, options Options) (AreaEvidence, b
 		if index < len(input.Hours) {
 			hour = input.Hours[index]
 		}
-		evidence := scoreHour(input.Area.ID, at, hour, options)
+		evidence := estimateHourTrips(input.Area.ID, at, hour, options)
 		area.Hourly = append(area.Hourly, evidence)
 		if evidence.Reason != "" {
 			area.Assessable = false
@@ -110,18 +110,18 @@ func scoreArea(input AreaInput, window Window, options Options) (AreaEvidence, b
 	}
 	// Step 3: Show totals only if every hour was assessed. A partial sum could mislead.
 	if area.Assessable {
-		area.Baseline = number(baseline)
-		area.Additional = number(additional)
-		area.Estimated = number(baseline + additional)
+		area.Baseline = floatPointer(baseline)
+		area.Additional = floatPointer(additional)
+		area.Estimated = floatPointer(baseline + additional)
 		if baseline > 0 {
-			area.RelativeUplift = number(100 * additional / baseline)
+			area.RelativeUplift = floatPointer(100 * additional / baseline)
 		}
 	}
 	return area, missingForecast
 }
 
 // Sets the status and message the user sees.
-func chooseAction(result *Result, missingForecast bool) {
+func selectScopeDecision(result *Result, missingForecast bool) {
 	// Step 1: Missing weather means we cannot make a current recommendation.
 	if missingForecast {
 		result.Status = "unavailable"
@@ -138,8 +138,8 @@ func chooseAction(result *Result, missingForecast bool) {
 		return
 	}
 	// Step 3: Find the highest extra-trip estimate and compare it with the threshold.
-	winner := bestArea(result.Areas)
-	result.HighestModeledAdditional = copyNumber(winner.Additional)
+	winner := areaWithHighestAdditionalTrips(result.Areas)
+	result.HighestModeledAdditional = cloneFloatPointer(winner.Additional)
 	if *winner.Additional < result.Threshold {
 		explainNoIntervention(result)
 		return
@@ -168,7 +168,7 @@ func explainNoIntervention(result *Result) {
 }
 
 // Higher absolute additional trips win; equal estimates use the smaller zone ID.
-func bestArea(areas []AreaEvidence) AreaEvidence {
+func areaWithHighestAdditionalTrips(areas []AreaEvidence) AreaEvidence {
 	best := areas[0]
 	for _, area := range areas[1:] {
 		if *area.Additional > *best.Additional || (*area.Additional == *best.Additional && area.Area.ID < best.Area.ID) {

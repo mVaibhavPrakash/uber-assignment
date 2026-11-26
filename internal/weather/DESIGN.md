@@ -9,3 +9,5 @@ There are no quota files or request workers in the application. Offline preparat
 The response parser matches locations in request order, requires hourly rain/snow/probability values and checks the requested units and UTC timestamps. The API labels rain, snow and probability at the end of the preceding hour, so those values are assigned to the interval starting one hour earlier. This keeps forecast weather aligned with historical trips.
 
 The weather service validates the complete snapshot and stores it in PostgreSQL. Failed fetches leave the previous forecast in place. The scheduler and recommendation service still enforce freshness and expiry. The retained external API failure test checks bounded retries, keeping usable previous weather, and suppressing expired weather.
+
+Recommendation refreshes consume this forecast and atomically publish a read-only result. The API prepares summary fields and stale warnings without modifying cached hourly evidence. Removing recommendation deep copies does not change forecast validation, storage, ownership or retry behavior.

@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import ComparisonBars from "./ComparisonBars";
-import { areaName, date, duration, number, signedNumber } from "../utils/presentation";
+import { formatAreaName, formatNewYorkTime, formatPlanningDuration, formatNumber, formatSignedNumber } from "../utils/presentation";
 import type { Recommendation } from "../types/recommendation";
 
 export function ForecastBadge({ freshness }: { freshness: string }) {
@@ -21,7 +22,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
   const primary = action ? result.primary_recommendation : null;
   const normal = result.status === "no_intervention";
   const title = primary
-    ? `Review driver availability in ${areaName(primary.area.name)}`
+    ? `Review driver availability in ${formatAreaName(primary.area.name)}`
     : normal
       ? "Continue normal operations"
       : result.status === "insufficient_evidence"
@@ -58,71 +59,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
           Supporting weather is stale. Check current conditions before acting.
         </p>
       )}
-      <dl className="metrics">
-        {primary ? (
-          <>
-            <div>
-              <dt>Expected additional trips</dt>
-              <dd>{signedNumber(primary.additional_trips)}</dd>
-            </div>
-            <div>
-              <dt>Expected increase</dt>
-              <dd>
-                {primary.relative_uplift_percent == null
-                  ? "Not available"
-                  : `${number(primary.relative_uplift_percent)}%`}
-              </dd>
-            </div>
-            <div>
-              <dt>Planning window</dt>
-              <dd>{duration(result)}</dd>
-            </div>
-          </>
-        ) : normal ? (
-          <>
-            <div>
-              <dt>Zones assessed</dt>
-              <dd>
-                {result.coverage.assessed}/{result.coverage.total}
-              </dd>
-            </div>
-            <div>
-              <dt>
-                {(result.highest_modeled_additional_trips ?? 0) < 0
-                  ? "Largest expected change"
-                  : "Largest expected increase"}
-              </dt>
-              <dd>
-                {number(result.highest_modeled_additional_trips)}{" "}
-                <span>trips</span>
-              </dd>
-            </div>
-            <div>
-              <dt>Intervention threshold</dt>
-              <dd>
-                {number(result.threshold_additional_trips)} <span>trips</span>
-              </dd>
-            </div>
-          </>
-        ) : (
-          <>
-            <div>
-              <dt>Zones assessed</dt>
-              <dd>
-                {result.coverage.assessed}/{result.coverage.total}
-              </dd>
-            </div>
-            <div>
-              <dt>Expected impact</dt>
-              <dd>Not available</dd>
-            </div>
-            <div>
-              <dt>Planning window</dt>
-              <dd>{duration(result)}</dd>
-            </div>
-          </>
-        )}
-      </dl>
+      <DecisionMetrics result={result} />
       {primary && (
         <>
           <div className="decision-evidence">
@@ -131,7 +68,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
             <p className="muted">
               Highest eligible additional-trip estimate across{" "}
               {result.coverage.total} monitored zones. Intervention threshold:{" "}
-              {number(result.threshold_additional_trips)} trips.
+              {formatNumber(result.threshold_additional_trips)} trips.
             </p>
           </div>
           <div className="before-acting">
@@ -147,8 +84,8 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
       <p className="decision-footer muted">
         {result.forecast_fetched_at ? (
           <>
-            Forecast fetched at {date(result.forecast_fetched_at, false)} ·
-            Decision valid until {date(result.valid_until, false)}
+            Forecast fetched at {formatNewYorkTime(result.forecast_fetched_at, false)} ·
+            Decision valid until {formatNewYorkTime(result.valid_until, false)}
           </>
         ) : (
           "Waiting for a current, complete forecast and recommendation."
@@ -156,4 +93,37 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
       </p>
     </section>
   );
+}
+
+// Select metric values separately from their shared presentation.
+function DecisionMetrics({ result }: { result: Recommendation }) {
+  const primary = result.status === "action_required" ? result.primary_recommendation : null;
+  const zones = `${result.coverage.assessed}/${result.coverage.total}`;
+  const trips = (value: number | null) => <>{formatNumber(value)} <span>trips</span></>;
+  let metrics: [string, ReactNode][];
+  if (primary) {
+    metrics = [
+      ["Expected additional trips", formatSignedNumber(primary.additional_trips)],
+      ["Expected increase", primary.relative_uplift_percent == null
+        ? "Not available" : `${formatNumber(primary.relative_uplift_percent)}%`],
+      ["Planning window", formatPlanningDuration(result)],
+    ];
+  } else if (result.status === "no_intervention") {
+    metrics = [
+      ["Zones assessed", zones],
+      [(result.highest_modeled_additional_trips ?? 0) < 0
+        ? "Largest expected change" : "Largest expected increase",
+        trips(result.highest_modeled_additional_trips)],
+      ["Intervention threshold", trips(result.threshold_additional_trips)],
+    ];
+  } else {
+    metrics = [
+      ["Zones assessed", zones],
+      ["Expected impact", "Not available"],
+      ["Planning window", formatPlanningDuration(result)],
+    ];
+  }
+  return <dl className="metrics">{metrics.map(([label, value]) => (
+    <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+  ))}</dl>;
 }

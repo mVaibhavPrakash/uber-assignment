@@ -26,9 +26,9 @@ type providerResponse struct {
 }
 
 // Matches each location and hourly weather value to our zone and time.
-func parseForecast(raw []byte, areas []repository.Area, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
+func parseForecastHours(raw []byte, areas []repository.Area, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
 	// Step 1: Read either one location object or a list of location objects.
-	responses, err := decodeForecast(raw)
+	responses, err := decodeProviderLocations(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -39,10 +39,10 @@ func parseForecast(raw []byte, areas []repository.Area, start time.Time, forecas
 	// Step 2: Match locations in request order and collect their hourly values.
 	rows := make([]repository.ForecastHour, 0, len(areas)*forecastHours)
 	for i, response := range responses {
-		if err := response.validateLocation(i); err != nil {
+		if err := response.validateLocationOrderAndUnits(i); err != nil {
 			return nil, err
 		}
-		hours, err := response.forecastRows(areas[i].ID, start, forecastHours)
+		hours, err := response.alignForecastHours(areas[i].ID, start, forecastHours)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +52,7 @@ func parseForecast(raw []byte, areas []repository.Area, start time.Time, forecas
 }
 
 // Handles the API's single-location and multiple-location formats.
-func decodeForecast(raw []byte) ([]providerResponse, error) {
+func decodeProviderLocations(raw []byte) ([]providerResponse, error) {
 	var err error
 	raw = bytes.TrimSpace(raw)
 	var responses []providerResponse
@@ -70,7 +70,7 @@ func decodeForecast(raw []byte) ([]providerResponse, error) {
 }
 
 // Checks the location order and the units requested from the API.
-func (response providerResponse) validateLocation(index int) error {
+func (response providerResponse) validateLocationOrderAndUnits(index int) error {
 	if response.LocationID != nil && *response.LocationID != index {
 		return fmt.Errorf("forecast location order mismatch")
 	}
@@ -81,13 +81,13 @@ func (response providerResponse) validateLocation(index int) error {
 }
 
 // Assigns each weather value to the hour it describes for one zone.
-func (response providerResponse) forecastRows(areaID int, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
+func (response providerResponse) alignForecastHours(areaID int, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
 	h := response.Hourly
 	n := len(h.Time)
 	if n == 0 || len(h.Rain) != n || len(h.Snow) != n || len(h.Probability) != n {
 		return nil, fmt.Errorf("incomplete forecast parallel arrays")
 	}
-	positions, err := indexForecastHours(h.Time)
+	positions, err := indexContiguousHourlyTimestamps(h.Time)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (response providerResponse) forecastRows(areaID int, start time.Time, forec
 
 // Checks that timestamps are complete, hourly and in order,
 // then records where each timestamp appears in the response arrays.
-func indexForecastHours(times []*int64) (map[int64]int, error) {
+func indexContiguousHourlyTimestamps(times []*int64) (map[int64]int, error) {
 	positions := make(map[int64]int, len(times))
 	for i, at := range times {
 		if at == nil || *at%3600 != 0 || i > 0 && *at-*times[i-1] != 3600 {

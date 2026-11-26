@@ -13,7 +13,7 @@ import (
 // Applies the schema to an empty database and COPYs prepared observations in
 // one transaction. JSON parsing errors and COPY failures rollback
 // areas, observations and any newly created schema together.
-func seedTransaction(ctx context.Context, pool *pgxpool.Pool, write func(seedWriter) error) (err error) {
+func seedInTransaction(ctx context.Context, pool *pgxpool.Pool, write func(seedWriter) error) (err error) {
 	tx, err := database.Begin(ctx, pool, "seed")
 	if err != nil {
 		return err

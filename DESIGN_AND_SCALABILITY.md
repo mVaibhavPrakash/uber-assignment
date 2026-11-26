@@ -10,7 +10,10 @@ The application runs as three services: a React/TypeScript frontend served by Ng
 flowchart LR
     Browser[React UI] -->|Same-origin API requests| Nginx
     Nginx --> API[Go HTTP handlers]
-    API --> Recommendation[Recommendation service and cached result]
+    API -->|Check current decision| Recommendation[Recommendation service]
+    Recommendation <-->|Read or atomically replace| ResultCache[Read-only recommendation cache]
+    Recommendation -->|Shared read-only evidence| Response[API response preparation]
+    Response -->|Summary or hourly JSON| API
     Scheduler[In-process scheduler] --> Weather[Weather service]
     Scheduler --> Recommendation
     Weather -->|HTTPS forecasts| OpenMeteo[Open-Meteo]
@@ -27,15 +30,27 @@ The startup path loads zones and historical SQL statistics from PostgreSQL and r
 |---|---|
 | `cmd/server/` | Wire dependencies, start HTTP/scheduler, handle graceful shutdown. |
 | `cmd/seed/`, `internal/seeding/` | Explicit database initialization from cleaned JSON using a transaction and bounded COPY batches. |
-| `internal/api/` | HTTP routing, status codes and response bodies. |
-| `internal/recommendation/` | Pure hourly/window scoring, decision selection, cached-result validity, safe copies and integer JSON formatting. |
+| `internal/api/` | HTTP routing, status codes and read-only response preparation in `response.go`. |
+| `internal/recommendation/` | Pure hourly/window scoring, decision selection, immutable-result publication, validity checks and integer JSON formatting. |
 | `internal/history/`, `internal/cache/` | Reusable historical lookups and in-memory snapshots. |
 | `internal/weather/`, `internal/scheduler/` | Bounded forecast fetching/retries, persistence coordination and sequential refresh jobs. |
 | `internal/repository/`, `internal/repository/postgres/` | Storage contracts and PostgreSQL queries/transactions; business services do not call SQL directly. |
 | `internal/domain/`, `internal/apperrors/` | Shared calendar/forecast rules and centralized errors. |
 | `frontend/src/` | `components/`, `types/`, `state/`, `styles/`, `api/` and display `utils/`; `App.tsx` composes the page. `frontend/main.tsx` mounts React. |
 
-The recommendation package separates responsibilities further: `hour.go` assesses one hour, `engine.go` aggregates/ranks zones, `service.go` joins inputs and manages result validity, `types.go` defines contracts, `copy.go` protects cached values and `json.go` rounds only outgoing trip quantities.
+The recommendation package separates responsibilities further: `hour.go` assesses one hour, `engine.go` aggregates/ranks zones, `service.go` joins inputs and manages result validity, `types.go` defines contracts and `json.go` rounds only outgoing trip quantities. The former deep-copy file has been removed.
+
+### Recommendation ownership and responses
+
+The scheduler constructs a complete result privately and atomically replaces the cached pointer. Once published, its nested slices, pointers and hourly values are read-only. A reader holding an older result can finish safely while a refresh publishes a new one; the old result is never edited in place.
+
+`Service.CurrentRecommendation` checks forecast version, planning window and expiry using the same validity helper as `NeedsRecompute`. It returns a small result value with current freshness; nested evidence is shared, not deep-copied. Go does not enforce immutability here: internal callers must honor the read-only contract.
+
+The API builds summary responses by copying only area headers and the primary area header before omitting their hourly fields. Insights serialize the shared hourly evidence directly. Fresh responses reuse read-only warnings; stale responses allocate a separate warning list. Response preparation never truncates cached evidence or appends to cached warnings. JSON rounding remains read-only and does not affect scoring.
+
+This reduces per-request copying within one process. It does not provide distributed scheduling or cross-instance cache consistency. Historical and forecast caches retain their existing ownership protections; this change concerns recommendation result reads only.
+
+Verification extends the existing recommendation test with [cache/response checks](tests/recommendation_cache_test.go), including concurrent refreshes, stale warnings, version mismatches and expiry. The race detector passed in a temporary Linux container. After rebuilding the API, 40 concurrent live summary/insight requests preserved the two-hour evidence and warning counts, with ready health and fresh 20/20-zone coverage.
 
 | Endpoint | Purpose |
 |---|---|

@@ -61,7 +61,7 @@ func listAreas(ctx context.Context, reader areaReader) ([]repository.Area, error
 	return areas, nil
 }
 
-func validQuery(q repository.HistoricalQuery) error {
+func validateHistoricalQuery(q repository.HistoricalQuery) error {
 	if q.MinRainfallMM <= 0 || math.IsNaN(q.MinRainfallMM) || math.IsInf(q.MinRainfallMM, 0) {
 		return fmt.Errorf("rainfall threshold must be finite and positive")
 	}
@@ -69,7 +69,7 @@ func validQuery(q repository.HistoricalQuery) error {
 }
 
 func (r *Repository) AggregateHourly(ctx context.Context, q repository.HistoricalQuery) ([]repository.HourlyStats, error) {
-	if err := validQuery(q); err != nil {
+	if err := validateHistoricalQuery(q); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +99,7 @@ func (r *Repository) AggregateHourly(ctx context.Context, q repository.Historica
 // It is an adapter-specific inspection tool, not a business-layer
 // repository method. It executes the identical SQL used by AggregateHourly.
 func (r *Repository) ExplainHistorical(ctx context.Context, q repository.HistoricalQuery) ([]string, error) {
-	if err := validQuery(q); err != nil {
+	if err := validateHistoricalQuery(q); err != nil {
 		return nil, err
 	}
 

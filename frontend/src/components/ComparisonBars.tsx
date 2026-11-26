@@ -1,4 +1,4 @@
-import { number, signedNumber } from "../utils/presentation";
+import { formatNumber, formatSignedNumber } from "../utils/presentation";
 import type { AreaEvidence } from "../types/recommendation";
 
 // Both bars share one scale. Labels keep the comparison readable without color.
@@ -22,28 +22,23 @@ export default function ComparisonBars({
     maximum === 0 ? "0%" : `${(value / maximum) * 100}%`;
   return (
     <div className="comparison">
-      <div className="bar-row">
-        <div className="bar-label">
-          <span>Typical dry-weather trips</span>
-          <strong>{number(baseline)}</strong>
+      {([
+        ["baseline", "Typical dry-weather trips", baseline],
+        ["estimated", "Expected trips with current forecast", estimated],
+      ] as const).map(([kind, label, value]) => (
+        <div className="bar-row" key={kind}>
+          <div className="bar-label">
+            <span>{label}</span><strong>{formatNumber(value)}</strong>
+          </div>
+          <div className="bar-track">
+            <div className={`bar ${kind}`} style={{ width: width(value) }} />
+          </div>
         </div>
-        <div className="bar-track">
-          <div className="bar baseline" style={{ width: width(baseline) }} />
-        </div>
-      </div>
-      <div className="bar-row">
-        <div className="bar-label">
-          <span>Expected trips with current forecast</span>
-          <strong>{number(estimated)}</strong>
-        </div>
-        <div className="bar-track">
-          <div className="bar estimated" style={{ width: width(estimated) }} />
-        </div>
-      </div>
+      ))}
       <p className="muted comparison-caption">
         {evidence.additional_trips === 0
           ? "No additional rain-related trip volume is projected."
-          : `${signedNumber(evidence.additional_trips)} completed trips compared with the dry-weather baseline.`}
+          : `${formatSignedNumber(evidence.additional_trips)} completed trips compared with the dry-weather baseline.`}
       </p>
     </div>
   );
