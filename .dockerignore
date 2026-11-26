@@ -1,0 +1,17 @@
+.git
+.env
+.local
+data/checkpoints
+data-preparation
+data/pilot
+data/synthetic
+data/taxi_zone_lookup.csv
+data/community_areas.json
+data/hourly_trips.json.gz
+data/manual_coordinate_inputs.json
+data/pilot_report.json
+data/preparation_status.json
+**/*.parquet
+bin
+frontend/node_modules
+frontend/dist

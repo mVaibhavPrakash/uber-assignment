@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17.7-alpine
+    environment:
+      POSTGRES_DB: mobility_control_room
+      POSTGRES_USER: mobility
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mobility}
+    volumes:
+      - mobility_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mobility -d mobility_control_room"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://mobility:${POSTGRES_PASSWORD:-mobility}@db:5432/mobility_control_room?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+  setup:
+    build: .
+    entrypoint: ["seed"]
+    command: ["-reset", "-data", "/data/public"]
+    environment:
+      DATABASE_URL: postgres://mobility:${POSTGRES_PASSWORD:-mobility}@db:5432/mobility_control_room?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
+volumes:
+  mobility_db:

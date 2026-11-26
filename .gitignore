@@ -1,0 +1,39 @@
+# Local configuration and secrets. Keep the example configuration for reviewers.
+.env
+.env.*
+!.env.example
+
+# Downloading and aggregation tools are not part of the assignment.
+/data-preparation/
+
+# Keep original downloads and preparation reports locally.
+# Only the prepared application seed and data documentation belong in Git.
+/data/*
+!/data/README.md
+!/data/public/
+/data/public/*
+!/data/public/seed.json
+*.parquet
+
+# Local databases, browser profiles, verification output and generated fixtures.
+/.local/
+*.log
+
+# Dependencies, compiled output and coverage reports.
+/bin/
+node_modules/
+/frontend/dist/
+*.tsbuildinfo
+coverage/
+coverage.out
+*.test
+*.exe
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
