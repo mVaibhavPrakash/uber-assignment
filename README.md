@@ -1,6 +1,6 @@
 # NYC Operations Control Room
 
-A weather-informed mobility dashboard for 20 selected NYC taxi zones. It recommends reviewing driver availability in the zone with the largest qualifying increase in completed trips, or explains why no intervention can be recommended. Completed trips measure activity, not unmet demand or driver supply.
+A weather-informed mobility dashboard for 20 selected NYC taxi zones. It shows one action to review driver availability, or explains why no intervention is recommended. Completed trips measure activity, not unmet demand or driver supply.
 
 ## Run
 
@@ -18,7 +18,6 @@ After startup, run `powershell -File scripts/verify-reviewer-setup.ps1` to check
 For local development, use Go 1.25+, PostgreSQL and Node.js 22. Configure environment variables using [.env.example](.env.example). Go reads environment variables directly; Compose loads an optional `.env` file.
 
 ```sh
-go run ./cmd/seed -data data/public -validate-only
 go run ./cmd/seed -data data/public
 go run ./cmd/server
 ```
@@ -33,17 +32,26 @@ npm run dev
 
 The frontend proxies requests to port 8080. It refreshes every 60 seconds and suppresses expired recommendations and results from failed refreshes.
 
-## Data and decisions
+## Architecture
 
-`data/public/seed.json` contains 20 selected zones and 697,440 matched hourly observations from NYC TLC HVFHV trips and historical weather for 2022–2025. Initialization validates JSON fields and inserts prepared observations. Downloading and aggregation tools remain separate in the ignored `data-preparation/` folder, excluded from the Docker build and unnecessary at startup.
+React/TypeScript is served by Nginx, which proxies API requests to Go. The Go application loads historical SQL statistics from PostgreSQL, periodically fetches and persists Open-Meteo forecasts, and computes one current recommendation. A one-shot setup container loads the prepared seed; no historical downloads are required at startup.
 
-PostgreSQL stores areas, historical observations and hourly forecasts. The repository performs meaningful SQL aggregation and comparison: dry/rainy averages, counts, rainy-hour sample standard deviation, and absolute/percentage differences grouped by zone, season, weekday and New York hour. Snow is excluded. Unknown statistics remain null. Go loads the reusable historical statistics at startup.
+See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#architecture), [data and scoring](DESIGN_AND_SCALABILITY.md#data-and-decisions), and [database design and SQL](DESIGN_AND_SCALABILITY.md#database-design-and-important-sql) for the detailed flow, endpoints and implementation.
 
-For each forecast hour, additional trips are `(rainy average - dry average) × precipitation probability`. Dry hours contribute zero extra trips and require only dry evidence. Rainy hours require both classes. The default five observations per relevant class is a coverage heuristic, not a significance test. Snow, trace rain, missing forecasts and insufficient history prevent assessment.
+## Documentation and deliverables
 
-Go sums signed changes over the next two complete hours. All monitored zones must be assessable before selecting the largest qualifying total; ties use zone ID. The default intervention threshold is 100 additional trips over two hours. Sample, rainfall and intervention thresholds are configurable. The UI displays backend explanations and effective settings without recalculating eligibility or ranking.
+| Deliverable | Where to find it |
+|---|---|
+| Architecture, endpoints, schema explanation and important SQL | [DESIGN_AND_SCALABILITY.md](DESIGN_AND_SCALABILITY.md) |
+| Assumptions, alternatives, trade-offs and known limitations | [TRADEOFFS.md](TRADEOFFS.md) |
+| AI tools, accepted/rejected suggestions, validation, risks and technical challenges | [MY_REASONING.md](MY_REASONING.md#ai-use-disclosure) |
+| Prepared public dataset and offline preparation boundary | [data/README.md](data/README.md) |
+| Executable schema and SQL | [migrations](database/migrations/), [historical aggregation](internal/repository/postgres/historical.sql) |
+| Dependencies and configuration | [go.mod](go.mod), [go.sum](go.sum), [frontend/package.json](frontend/package.json), [lockfile](frontend/package-lock.json), [.env.example](.env.example), [compose.yaml](compose.yaml) |
+| Three focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [external API failure](tests/weather_test.go) |
+| Working product demonstration | Screenshots below; the two Docker commands above run the application locally. |
 
-Weather refreshes every three hours with three attempts, exponential backoff and jitter. Forecasts persist in PostgreSQL. Recommendations refresh hourly and after successful weather refreshes. The UI distinguishes normal, intervention, insufficient evidence, stale weather and unavailable results. Selecting another zone changes supporting evidence, not the primary decision.
+Repository publication/access verification remains a submission step; no remote URL is currently configured. A hosted deployment is optional and is not supplied here.
 
 ## Screenshots
 
@@ -55,7 +63,7 @@ Intervention example: **illustrative development scenario with fictional weather
 
 ![Clearly labeled illustrative intervention scenario](docs/intervention-required.png)
 
-Generate five development scenarios with `go run ./tests/ui-fixtures` from the repository root. Outputs go only to ignored `.local/ui-fixtures/`. Manual browser checks substitute responses within the browser and display an illustrative label. There is no production demo toggle, fixture endpoint or database mutation.
+The intervention screenshot was captured using explicitly labeled development inputs and the real scoring function. It is a saved demonstration, not a production simulation mode. There is no fixture endpoint, production demo toggle or silent replacement of live weather.
 
 ## Validation
 
@@ -66,16 +74,4 @@ go build ./...
 npm run build --prefix frontend
 ```
 
-Three focused backend tests cover recommendation behavior/messages, SQL historical evidence and retaining the previous forecast when the external API fails. Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include SQL verification; that case creates/removes its own temporary schema and skips without the variable.
-
-Manual browser checks cover all five states on desktop and mobile, selection, selection reset on a new decision, expiry suppression and browser exceptions. Docker verification seeded 20 zones and 697,440 observations, built and started all services, and confirmed frontend HTTP 200, proxied API access, ready health and a fresh recommendation covering 20/20 zones.
-
-## Limitations and implementation
-
-Historical associations do not establish causation. Old observations may not reflect current travel patterns, holidays, pricing or disruptions. Precipitation probability is a proxy for qualifying rain, and weather varies within zones. Counts and standard deviation describe historical evidence, not calibrated confidence. Only selected zones are monitored; the application cannot establish a driver shortage. The dashboard keeps controller-facing warnings concise and omits sample counts, historical-statistics tables and calculation details.
-
-Backend JSON responses round trip quantities to whole integers; missing values remain null. Scoring, ranking and threshold comparisons retain full precision before serialization. Percentages and weather measurements retain decimals. Hourly values and window totals are rounded independently, so displayed hourly figures can differ slightly from a displayed total.
-
-The Go API separates handlers, recommendation logic, weather fetching and PostgreSQL repositories. Initialization lives in `internal/seeding`; shared error handling lives in `internal/apperrors/errors.go`. React/TypeScript uses a small stylesheet without a component or chart library.
-
-Codex assisted with implementation, refactoring, SQL, UI and validation. User decisions established the selected zones, editable coordinates, separate preparation tooling and simpler retry/design requirements. Complex quota/worker machinery was simplified, and the earlier report-style interface became a decision-first layout. Validation used focused Go tests, real PostgreSQL, frontend builds and browser checks; it does not imply independent human review or deployment verification.
+Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include SQL verification. That test creates/removes its own temporary schema and skips without the variable. Docker setup was also verified from a clean copy with no local dependencies/build artifacts and a new database volume.

@@ -23,7 +23,7 @@ func (w seedWriter) CopyAreas(ctx context.Context, input []Area) error {
 	return nil
 }
 
-// Inserts one validated batch using PostgreSQL COPY.
+// Inserts one prepared batch using PostgreSQL COPY.
 func (writer seedWriter) CopyObservations(ctx context.Context, input []Observation) error {
 	columns := []string{
 		"area_id", "hour_start", "local_date",

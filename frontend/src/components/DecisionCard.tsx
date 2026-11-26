@@ -1,6 +1,6 @@
 import ComparisonBars from "./ComparisonBars";
-import { areaName, date, duration, number, signedNumber } from "./presentation";
-import type { Recommendation } from "./types";
+import { areaName, date, duration, number, signedNumber } from "../utils/presentation";
+import type { Recommendation } from "../types/recommendation";
 
 export function ForecastBadge({ freshness }: { freshness: string }) {
   const label =

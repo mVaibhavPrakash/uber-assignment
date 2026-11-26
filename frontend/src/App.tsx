@@ -1,9 +1,9 @@
 ﻿import { useState } from 'react';
-import DecisionCard, { ForecastBadge } from './DecisionCard';
-import EvidencePanel from './EvidencePanel';
-import Uncertainty from './Uncertainty';
-import { useInsights, useRecommendation } from './hooks';
-import { areaName, date } from './presentation';
+import DecisionCard, { ForecastBadge } from './components/DecisionCard';
+import EvidencePanel from './components/EvidencePanel';
+import Uncertainty from './components/Uncertainty';
+import { useInsights, useRecommendation } from './state/hooks';
+import { areaName, date } from './utils/presentation';
 
 export default function App() {
   const { result, loading, error, expired, refresh } = useRecommendation();

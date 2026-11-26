@@ -1,5 +1,5 @@
-import { number, signedNumber } from "./presentation";
-import type { AreaEvidence } from "./types";
+import { number, signedNumber } from "../utils/presentation";
+import type { AreaEvidence } from "../types/recommendation";
 
 // Both bars share one scale. Labels keep the comparison readable without color.
 export default function ComparisonBars({

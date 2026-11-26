@@ -1,6 +1,103 @@
-# Design considerations and scalability
+# Architecture, database design and scalability
 
-Companion to plan.md. Current decisions are proposed implementation, not measured results. The assignment values one useful decision over infrastructure; production alternatives below are discussion material.
+Current implementation details are documented first. Earlier alternatives and scaling discussions are retained below and are not promises of implemented features.
+
+## Architecture
+
+The application runs as three services: a React/TypeScript frontend served by Nginx, a Go API with an in-process scheduler, and PostgreSQL. A separate, one-shot setup container loads the prepared seed. Node.js is used to build the frontend; it is not required in the frontend runtime container.
+
+```mermaid
+flowchart LR
+    Browser[React UI] -->|Same-origin API requests| Nginx
+    Nginx --> API[Go HTTP handlers]
+    API --> Recommendation[Recommendation service and cached result]
+    Scheduler[In-process scheduler] --> Weather[Weather service]
+    Scheduler --> Recommendation
+    Weather -->|HTTPS forecasts| OpenMeteo[Open-Meteo]
+    Weather <-->|Repository: persisted snapshots| DB[(PostgreSQL)]
+    DB -->|Startup SQL aggregation| History[Historical statistics cache]
+    History --> Recommendation
+    Weather -->|Committed forecast snapshot| Recommendation
+    Seed[Setup: prepared seed.json] -->|Transactional COPY| DB
+```
+
+The startup path loads zones and historical SQL statistics from PostgreSQL and restores the last persisted forecast. The scheduler then fetches weather and computes a recommendation. A successful weather refresh commits a complete snapshot before publishing it to the in-memory cache; failed requests retain the previous snapshot within its freshness limits. API requests read the current result rather than fetching weather or scanning historical data.
+
+| Location | Responsibility |
+|---|---|
+| `cmd/server/` | Wire dependencies, start HTTP/scheduler, handle graceful shutdown. |
+| `cmd/seed/`, `internal/seeding/` | Explicit database initialization from cleaned JSON using a transaction and bounded COPY batches. |
+| `internal/api/` | HTTP routing, status codes and response bodies. |
+| `internal/recommendation/` | Pure hourly/window scoring, decision selection, cached-result validity, safe copies and integer JSON formatting. |
+| `internal/history/`, `internal/cache/` | Reusable historical lookups and in-memory snapshots. |
+| `internal/weather/`, `internal/scheduler/` | Bounded forecast fetching/retries, persistence coordination and sequential refresh jobs. |
+| `internal/repository/`, `internal/repository/postgres/` | Storage contracts and PostgreSQL queries/transactions; business services do not call SQL directly. |
+| `internal/domain/`, `internal/apperrors/` | Shared calendar/forecast rules and centralized errors. |
+| `frontend/src/` | `components/`, `types/`, `state/`, `styles/`, `api/` and display `utils/`; `App.tsx` composes the page. `frontend/main.tsx` mounts React. |
+
+The recommendation package separates responsibilities further: `hour.go` assesses one hour, `engine.go` aggregates/ranks zones, `service.go` joins inputs and manages result validity, `types.go` defines contracts, `copy.go` protects cached values and `json.go` rounds only outgoing trip quantities.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/recommendations` | One action or explicit no-intervention/insufficient/unavailable result, with zone summaries. |
+| `GET /api/areas` | Selected zone metadata. |
+| `GET /api/areas/{id}/insights` | Hourly evidence for a zone. Optional `forecast_version` and `window_start` parameters bind details to the displayed decision; mismatches return 409. |
+| `GET /api/health` | Ready, degraded or unavailable state. |
+
+Usable recommendations, including insufficient evidence, return 200; unavailable recommendations return 503. The scheduler normally checks every 15 minutes and wakes at hour boundaries. Forecasts become stale after three hours, and recommendation validity ends at the next window rollover or forecast age limit of six hours, whichever comes first. The UI polls every minute, matches insight versions/windows, and hides expired actions. The Refresh button reloads API state; it does not force a new provider request.
+
+## Data and decisions
+
+Source references: [NYC TLC trip records and High Volume FHV data dictionary](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) and [Open-Meteo forecast API documentation](https://open-meteo.com/en/docs). The bundled seed is a prepared hourly aggregation, not the original trip-level download.
+
+`data/public/seed.json` contains 20 selected zones and 697,440 matched hourly observations from NYC TLC HVFHV trips and historical weather for 2022–2025. Initialization decodes the already-cleaned JSON and copies observations into PostgreSQL in one transaction, without repeating preparation-time field validation. Downloading, aggregation and null-field cleanup tools remain separate in the ignored `data-preparation/` folder, excluded from the Docker build and unnecessary at startup. Optional weather measurements may remain null; mandatory null or missing fields are removed offline before publishing the seed.
+
+PostgreSQL stores areas, historical observations and hourly forecasts. The repository performs meaningful SQL aggregation and comparison: dry/rainy averages, counts, rainy-hour sample standard deviation, and absolute/percentage differences grouped by zone, season, weekday and New York hour. Snow is excluded. Unknown statistics remain null. Go loads the reusable historical statistics at startup.
+
+For each forecast hour, additional trips are `(rainy average - dry average) × precipitation probability`. Dry hours contribute zero extra trips and require only dry evidence. Rainy hours require both classes. The default five observations per relevant class is a coverage heuristic, not a significance test. Snow, trace rain, missing forecasts and insufficient history prevent assessment.
+
+Go sums signed changes over the next two complete hours. All monitored zones must be assessable before selecting the largest qualifying total; ties use zone ID. The default intervention threshold is 100 additional trips over two hours. Sample, rainfall and intervention thresholds are configurable. The UI displays backend decisions and explanations without recalculating eligibility or ranking.
+
+Weather refreshes every three hours with three attempts, exponential backoff and jitter. Forecasts persist in PostgreSQL. Recommendations refresh hourly and after successful weather refreshes. The UI distinguishes normal, intervention, insufficient evidence, stale weather and unavailable results. Selecting another zone changes supporting evidence, not the primary decision.
+
+## Database design and important SQL
+
+The schema has three tables. The [up migration](database/migrations/000001_init.up.sql) creates them; the [down migration](database/migrations/000001_init.down.sql) drops them in reverse dependency order.
+
+| Table | Stored data and keys | Design reason |
+|---|---|---|
+| `community_areas` | Zone ID primary key, name and representative latitude/longitude. | One shared operational scope for historical matching and live forecasts; the name is retained although the current dataset uses NYC taxi zones. |
+| `historical_observations` | Primary key `(area_id, hour_start)`; foreign key to zones; trip count, historical weather and precomputed local calendar fields. | Mobility and weather are already joined offline, so runtime aggregation needs no historical join or source downloads. Optional weather measurements are nullable. |
+| `weather_forecasts` | Primary key `(area_id, hour_start)`; foreign key to zones; forecast version, fetched time, rain, snow and precipitation probability. | Persists the latest complete forecast for restart recovery. Replacement is transactional; this is not a forecast-version archive. |
+
+Primary keys prevent duplicate zone/hour records and foreign keys enforce zone references. Required database columns are `NOT NULL`. Calendar fields use New York local time while hourly timestamps are stored as `TIMESTAMPTZ`. A `(hour_start, area_id)` forecast index supports time-based access. No extra historical secondary index is added: the startup query aggregates the complete historical dataset, so an index benefit should be measured before adding one.
+
+The main analytical query is [historical.sql](internal/repository/postgres/historical.sql):
+
+```sql
+WITH historical_stats AS (
+    SELECT area_id, season, day_of_week, hour_of_day,
+           AVG(trip_count) FILTER (WHERE rain_mm = 0) AS dry_avg,
+           COUNT(*) FILTER (WHERE rain_mm = 0) AS dry_n,
+           AVG(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_avg,
+           COUNT(*) FILTER (WHERE rain_mm >= $1) AS rain_n,
+           STDDEV_SAMP(trip_count) FILTER (WHERE rain_mm >= $1) AS rain_stddev
+    FROM historical_observations
+    WHERE snowfall_cm = 0
+    GROUP BY area_id, season, day_of_week, hour_of_day
+)
+SELECT area_id, season, day_of_week, hour_of_day,
+       dry_avg, dry_n, rain_avg, rain_n, rain_stddev,
+       rain_avg - dry_avg AS absolute_uplift,
+       100.0 * (rain_avg - dry_avg) / NULLIF(dry_avg, 0) AS percentage_uplift
+FROM historical_stats;
+```
+
+`$1` is the configured qualifying-rain threshold, default 0.5 mm/hour. This answers: **for the same zone and comparable seasonal weekday/hour, how do completed trips differ between dry and rainy conditions?** SQL performs the meaningful aggregation and comparison required by the assessment. `FILTER` keeps the two populations separate, the CTE reuses their averages, and `NULLIF` avoids division by zero. A missing mean or single-observation standard deviation remains null. Sample standard deviation measures rainy-hour dispersion, not confidence or causality.
+
+Go consumes these SQL results and applies minimum samples, forecast probability, window summation, eligibility and ranking. For example, dry mean 1,200 and rainy mean 1,700 produce SQL uplift of 500; a 90% probability gives 450 modeled additional trips in Go. This is an illustrative calculation, not a live observation.
+
+Forecast storage uses one committed read of the current snapshot and a transaction to replace all forecast rows; readers therefore do not receive a partially replaced snapshot. [forecast.go](internal/repository/postgres/forecast.go) contains these queries. Historical SQL runs at startup and its results are cached; historical-data/config changes require a restart to rebuild that cache.
 
 ## Recommendation design history: alternatives and final decision
 All counts below are approximate potential observations per area/hour before weather filtering, assuming four complete years. Selected dataset is NYC HVFHV 2022–2025, with missingness and changing travel patterns.
@@ -17,24 +114,6 @@ All counts below are approximate potential observations per area/hour before wea
 | Regression / boosted trees / time series | Varies | Multiple factors, nonlinearities | Training, validation, serving, explainability; future |
 
 Final: winter Dec–Feb, spring Mar–May, summer Jun–Aug, autumn Sep–Nov. All seven ISO days independently, same area and hour. Compare rainy/dry means and counts from the same group. Five samples per category is a heuristic, not statistical significance. Adding three observations to three can reduce sampling variance if representative, but cannot guarantee better accuracy; broader windows may increase bias. Fixed season is selected for clarity and scope, not because measured superiority has been established. No automatic fallback. Report insufficient evidence, coverage and old data/holiday/pandemic/temperature confounding. Conservative citywide coverage policy retained; assess actual coverage early and seek approval before relaxing it.
-
-## Database, aggregation and indexes
-
-The historical query now uses a CTE with a shared `WHERE snowfall_cm = 0`, computes dry/rain means and counts plus `STDDEV_SAMP` for rainy trip counts, and returns signed absolute/percentage uplift using `NULLIF(dry_avg, 0)`. Snow-only groups are absent; trace-only groups can remain with unknown class statistics. All derived values stay nullable and unrounded in the repository and immutable cache. Dispersion is descriptive trips/hour, not mean uncertainty, causal confidence or an eligibility/ranking input. The existing PostgreSQL integration fixture verifies the plan's 1200/1700 means, 500 uplift, 41.6667 percent and 282.8427 sample standard deviation, along with one-sample/zero-baseline NULL cases and negative uplift.
-
-Implementation update: `internal/repository/postgres/historical.sql` is the actual parameterized seasonal aggregation. `internal/history` loads it once through repository interfaces into a bounded, immutable `internal/cache` snapshot; ingestion and lookup share `internal/domain.Calendar`. Tests exercise the same SQL against isolated PostgreSQL rows, including December/January/February grouping, all ISO weekdays, another season and zone, snow/trace exclusion, zero versus NULL, and missing evidence. The adapter's `ExplainHistorical` runs `EXPLAIN (ANALYZE, BUFFERS)` on this same SQL. Fixture query plans are inspection evidence only; full prepared-data startup performance remains unmeasured.
-Three tables: areas, joined historical observations, persisted live forecasts. Separate offline artifacts allow regeneration. Four normalized tables would allow independent historical queries but exceed brief. Combined rows eliminate runtime join; unmatched observations excluded and reported. Primary key (area_id,hour_start) supports area/time. Prior day/date index suited rolling selective query, now removed because full startup aggregation reads all history. Consider (season,day_of_week,hour_of_day,area_id) only for proven selective workload. Forecast time/area index is a candidate; tiny table may prefer scan. Inspect EXPLAIN (ANALYZE, BUFFERS) after ANALYZE; indexes cost writes/storage. No measured performance claim.
-
-| Aggregation | Pros | Cons / decision |
-|---|---|---|
-| Runtime SQL per refresh | Low startup | Repeated scans; rejected |
-| Full startup seasonal SQL | One query, max 13,440 at 20 zones keys, no daily rebuild | Startup scan and memory; selected |
-| Daily rolling cache | Calendar continuity | Date rollover and fallback complexity; rejected |
-| GROUPING SETS | Multiple reusable levels | Unneeded hierarchy; deferred |
-| Materialized view / summary table | Durable reusable stats | Refresh and schema complexity; deferred |
-| Incremental stream rollups | Continuous updates | Event time, late data, operations; future |
-
-Immutable map keyed by area, season, ISO day, hour; restart after historical data or rainfall threshold changes. Cross-midnight and season boundaries use existing keys. At larger scale use measured selective processing, shared summaries and partitioning.
 
 ## Duration, granularity and cadence
 Independent dimensions: mobility resolution 1h, weather 1h, planning horizon 2h, recommendation refresh 1h, weather fetch 3h, scheduler check 15m. Use time.Duration for scheduling and whole-hour horizons, fixed hourly hour_start and hour_of_day (0–23). Source metadata must declare hourly resolution. 4/6/12/24h use same engine, UTC iteration, local date lookup; N*H evaluations (40/80/120/240/480 at 20 zones). Cross-midnight uses each hour’s season/day/hour key; forecast coverage >= horizon+staleness+alignment. Longer horizon threshold scales 50 trips/hour, but can dilute short spikes; future peak-hour gate. Multiple simultaneous horizons need API parameter, cache key/window/version and scheduling changes; prefix sums useful for frequent windows, preserve missing-evidence counts.
@@ -74,9 +153,6 @@ Live weather implementation: seeded areas are fetched in configurable batches wi
 
 Forecast replacement uses one PostgreSQL transaction for validation, delete and COPY. Readers use one SELECT, and the in-memory snapshot is published only after commit. Unknown commit outcomes trigger a bounded reload and never a blind write retry; failed reconciliation suppresses the cache. Runtime and offline preparation share the persisted weighted quota ledger. The current single weather worker runs at startup and every configured weather interval; the combined weather/recommendation scheduler remains the later scheduler task. Historical-only or forecast-only startup never claims recommendation readiness.
 Single instance: sequential scheduler, immutable versioned snapshots, persistent forecast, in-memory cache, bounded retry/timeouts, stale/expired distinction, graceful shutdown. No distributed lock needed. Multiple replicas: shared stats/results cache (Redis adapter), single elected scheduler or dedicated worker, fencing/version checks, transactional publication; Redis alone does not coordinate jobs. High event throughput: queue/stream only when continuous ingestion exists, idempotent consumers, event-time windows and backpressure. Large historical store: partition, incremental summaries, retention and query profiling. High frontend traffic: cached API, CDN static assets, conditional requests; no websocket needed for hourly changes. At 20 areas every 3h ~160 area forecast evaluations/day vs every minute ~28,800, before batching/quotas; actual API units differ. Monitor duration, failures, coverage, freshness, cache hit and DB plan; scale based on measured bottleneck.
-
-## Interview extensions
-Explain why seasonal matching instead of exact dates; why a full scan may beat an index for startup aggregation; why startup cache rather than repeated SQL; how 12h crosses midnight; why minute resolution needs new data; how forecast failure preserves prior version; why weights were deferred; why three tables; how to migrate to multi-instance safely. Demonstrate one actual query plan and actual tests after implementation. Current limitations: old historical data, sparse rain samples, strict citywide coverage may suppress action, uncalibrated thresholds, weather spatial/temporal resolution, no supply or causal inference. No benchmarks or validation completed in this planning document.
 
 ## Repository portability and storage migration
 The Go service layer depends on domain-oriented AreaRepository, HistoricalRepository and ForecastRepository contracts. PostgreSQL adapter owns SQL, pgx, null mapping and atomic forecast replacement; the composition root injects it. Scoring remains pure. Use real PostgreSQL integration tests for SQL and fakes for service failure scenarios. Avoid generic CRUD, ORM and leaky query abstractions.

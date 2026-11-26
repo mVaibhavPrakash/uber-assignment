@@ -1,4 +1,4 @@
-import type { HourEvidence, Recommendation } from './types';
+import type { HourEvidence, Recommendation } from '../types/recommendation';
 
 export function number(value: number | null | undefined) {
   return value == null ? 'Not available' : value.toLocaleString('en-US', { maximumFractionDigits: 1 });

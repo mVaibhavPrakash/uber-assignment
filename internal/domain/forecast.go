@@ -2,10 +2,11 @@ package domain
 
 import (
 	"fmt"
-	"github.com/google/uuid"
 	"math"
 	"mobilitycontrolroom/internal/repository"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
@@ -53,7 +54,7 @@ type forecastPeriod struct {
 	count       int
 }
 
-// forecastAreaIDs identifies the zones a forecast is allowed to contain.
+// Identifies the zones a forecast is allowed to contain.
 func forecastAreaIDs(areas []repository.Area) (map[int]bool, error) {
 	known := map[int]bool{}
 	for _, a := range areas {
@@ -65,7 +66,7 @@ func forecastAreaIDs(areas []repository.Area) (map[int]bool, error) {
 	return known, nil
 }
 
-// collectForecastPeriods checks rows and counts unique hours for each zone.
+// Checks rows and counts unique hours for each zone.
 func collectForecastPeriods(hours []repository.ForecastHour, known map[int]bool) (map[int]forecastPeriod, error) {
 	periods := map[int]forecastPeriod{}
 	seen := map[struct {

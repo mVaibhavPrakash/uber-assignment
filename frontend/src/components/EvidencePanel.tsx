@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
 import ComparisonBars from './ComparisonBars';
-import { areaName, assessment, date, duration, number } from './presentation';
-import type { AreaEvidence, Recommendation } from './types';
+import { areaName, assessment, date, duration, number } from '../utils/presentation';
+import type { AreaEvidence, Recommendation } from '../types/recommendation';
 
 export default function EvidencePanel({ evidence, result }: { evidence: AreaEvidence; result: Recommendation }) {
   return <>

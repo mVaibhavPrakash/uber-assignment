@@ -5,13 +5,14 @@ import (
 	"mobilitycontrolroom/internal/apperrors"
 
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"mobilitycontrolroom/internal/database"
 	"mobilitycontrolroom/internal/domain"
 	"mobilitycontrolroom/internal/repository"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var _ repository.ForecastRepository = (*Repository)(nil)
@@ -86,7 +87,7 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	return apperrors.CommitForecast(ctx, tx)
 }
 
-// lockForecastPublication keeps zone data stable and allows one forecast writer at a time.
+// Keeps zone data stable and allows one forecast writer at a time.
 func lockForecastPublication(ctx context.Context, tx pgx.Tx) error {
 	const command = `
 		LOCK TABLE community_areas IN SHARE MODE;
@@ -97,7 +98,7 @@ func lockForecastPublication(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-// copyForecast replaces all forecast rows inside the caller's transaction.
+// Replaces all forecast rows inside the caller's transaction.
 func copyForecast(ctx context.Context, tx pgx.Tx, s repository.ForecastSnapshot) error {
 	var err error
 	if _, err = tx.Exec(ctx, `DELETE FROM weather_forecasts`); err != nil {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// Validates JSON records and sends bounded batches to storage.
+// Reads prepared JSON records and sends bounded batches to storage.
 func copyObservations(ctx context.Context, writer seedWriter, path string) (Summary, error) {
 	batch := make([]Observation, 0, 10000)
 	flush := func() error {

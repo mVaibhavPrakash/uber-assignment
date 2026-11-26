@@ -1,4 +1,4 @@
-// Command seed validates prepared JSON, optionally resets the dedicated disposable
+// Command seed reads prepared JSON, optionally resets the dedicated disposable
 // database, applies the initial migration, and transactionally loads observations.
 package main
 
@@ -29,9 +29,8 @@ func main() {
 
 func run() error {
 	dir := flag.String("data", "data/public", "directory containing prepared seed.json")
-	validateOnly := flag.Bool("validate-only", false, "validate artifacts without connecting to PostgreSQL")
 	reset := flag.Bool("reset", false, "DROP/CREATE only the disposable mobility_control_room database; stop app first")
-	timeout := flag.Duration("timeout", 30*time.Minute, "overall validation/setup timeout")
+	timeout := flag.Duration("timeout", 30*time.Minute, "overall setup timeout")
 	flag.Parse()
 	if *timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
@@ -40,19 +39,15 @@ func run() error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(root, *timeout)
 	defer cancel()
-	// Invalid input must fail before any database can be reset.
-	summary, err := seeding.ScanSeed(ctx, filepath.Join(*dir, "seed.json"), nil)
-	if err != nil {
-		return fmt.Errorf("validate artifacts: %w", err)
-	}
-	if *validateOnly {
-		return json.NewEncoder(os.Stdout).Encode(summary)
+	// Catch a missing prepared file before starting database setup.
+	if _, err := os.Stat(filepath.Join(*dir, "seed.json")); err != nil {
+		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	summary, err = initializeDatabase(ctx, cfg, *dir, *reset)
+	summary, err := initializeDatabase(ctx, cfg, *dir, *reset)
 	if err != nil {
 		return err
 	}

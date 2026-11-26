@@ -1,4 +1,4 @@
-# Operations Control Room — implementation plan
+# Operations Control Room - implementation plan
 
 Standalone brief for a fresh Codex session. Status: design only; no implementation, tests or benchmarks claimed. Read this entire file before editing. For each task propose files, approach and acceptance checks, wait for approval, implement only that task, run checks and report results, then wait again. Keep the assignment within 8–10 hours of active engineering; downloads may take longer.
 

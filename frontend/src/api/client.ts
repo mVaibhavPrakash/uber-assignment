@@ -1,4 +1,4 @@
-import type { Insights, Recommendation } from './types';
+import type { Insights, Recommendation } from '../types/recommendation';
 
 export async function getRecommendation(signal: AbortSignal): Promise<Recommendation> {
   const response = await fetch('/api/recommendations', { signal, cache: 'no-store' });
@@ -22,12 +22,19 @@ export async function getInsights(
     signal,
     cache: 'no-store',
   });
+  
   // A new forecast or window requires reloading the main recommendation first.
-  if (response.status === 409) return null;
-  if (!response.ok) throw new Error('Area evidence is unavailable. Try refreshing.');
+  if (response.status === 409) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error('Area evidence is unavailable. Try refreshing.');
+  }
+
   const details: Insights = await response.json();
-  if (details.forecast_version !== result.forecast_version
-    || details.window.start !== result.window.start
-    || details.window.end !== result.window.end) return null;
+  if (details.forecast_version !== result.forecast_version|| details.window.start !== result.window.start || details.window.end !== result.window.end) {
+    return null;
+  }
+
   return details;
 }

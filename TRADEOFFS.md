@@ -1,29 +1,20 @@
-# Engineering trade-offs
+# Assumptions, trade-offs and limitations
 
-The goal is one actionable, explainable recommendation within the 8–10 hour assignment, not a general analytics platform.
-
-| Decision | Why / limitation |
+| Choice or assumption | Reason and limitation |
 |---|---|
-| 20 selected NYC taxi zones, one manually supplied representative coordinate each | Simple geography and weather lookup; representative point and weather grid cannot represent every location. |
-| Three source artifacts, projected Go Parquet aggregation | Independent regeneration and smaller downloads; requires version/coverage validation and merge. |
-| Three DB tables | Combine historical trip/weather observations, retain areas and persisted forecasts; meets brief, but independent historical queries need original artifacts. |
-| Minimal migration and Docker | Reproducible two-command setup; explicit reset only for disposable DB, production needs tracked migrations. |
-| Fixed meteorological seasons, same day/hour | Balances seasonality and sample size without rolling arithmetic; abrupt boundaries and sparse rain remain. No adaptive fallback. |
-| Startup seasonal SQL cache | One aggregation, max 13,440 at 20 zones keys; rebuild on restart after dataset/config changes. Startup scan cost. |
-| Primary keys and candidate forecast index | Full startup aggregation may prefer sequential scan; defer historical secondary index until selective workload is measured. |
-| Configurable duration and threshold; absolute signed extra trips | Simple ranking, favors busy areas; defer rain/dry weights and temporal decay. Defaults uncalibrated. |
-| Fixed hourly data, 3h weather fetch | Both selected weather feeds are hourly; finer mobility alone cannot identify subhour rainfall. No shipped raw or 15-minute artifacts or dynamic buckets. Retain source references for future reaggregation. Fetch cadence may miss sudden changes. |
-| Domain-oriented repository interfaces | Isolate PostgreSQL SQL, pgx and transactions; inject only one adapter now. MySQL/DynamoDB need new storage design, migration and tests, not changes throughout business logic. No generic CRUD or speculative adapters. |
-| One scheduler and in-memory cache | Simple single-instance reliability; multi-replica coordination and Redis deferred. |
-| Three focused tests | SQL, scoring and external failure; manual checks cover other operational scenarios. |
-| One primary action, evidence and uncertainty | Avoid competing recommendations; insufficient evidence distinct from no intervention. |
+| 20 manually selected zones with one representative coordinate each | Keeps the comparison manageable, but excludes the rest of NYC and cannot capture within-zone weather variation. |
+| Same season, weekday and local hour; equal weighting across years | Explainable comparison with reusable SQL. It assumes historical comparability, introduces season boundaries and does not adapt to recent trends. |
+| Fixed rain threshold and five observations per relevant class | Simple configurable eligibility. Neither the sample minimum nor the intervention threshold is statistically calibrated. Snow and trace rain are unsupported rather than treated as dry. |
+| Linear probability-weighted rainy–dry difference | Easy to explain. It treats precipitation probability as a qualifying-rain proxy and does not model rain intensity, interactions or intervention outcomes. |
+| Signed additional trips, ranked by absolute trip count rather than percentage | Prioritizes larger modeled activity changes and preserves decreases. It may favor busier zones; it does not account for available drivers, intervention cost or revenue. |
+| Complete evidence across every monitored zone/hour | Avoids naming a scope-wide winner when a zone cannot be assessed, but one unsupported zone can suppress an action. No automatic fallback relaxes the rule. |
+| Startup historical cache and one scheduler instance | Keeps request handling small and avoids repeated scans/provider calls. Multi-replica scheduling, distributed caches and automatic historical refresh are deferred. |
+| PostgreSQL plus a small Go/React application | Meets the relational/SQL requirement with three tables and explicit behavior. Authentication, ML, maps and additional dashboards were omitted to keep focus on one decision. |
 
-Completed trips do not measure unmet demand or driver shortage. Rain probability is an approximation; old data, holidays, pandemic, temperature and sparse observations may mislead. Strict configured-zone coverage may yield insufficient evidence; inspect actual data before revising. No ML, Kafka, Redis, partitioning, minute ingestion or multi-horizon UI until justified. Index performance, sample coverage and heuristic accuracy remain unvalidated.
+Historical associations do not establish causation. Old observations may not reflect current travel patterns, holidays, pricing or disruptions. Precipitation probability is a proxy for qualifying rain, and weather varies within zones. Counts and standard deviation describe historical evidence, not calibrated confidence. Only selected zones are monitored; the application cannot establish a driver shortage. The dashboard keeps controller-facing warnings concise and omits sample counts, historical-statistics tables and calculation details.
 
-## Recommendation alternatives
-Exact date: too few samples. All-year weekday/hour: more evidence but seasonal mixing. Monthly: sparse rain. Rolling ±45 and adaptive ±60/90: smoother calendar matching and possible coverage gain, but extra samples may not improve accuracy and wider windows mix seasons. Fixed seasons chosen for explainability, not proven accuracy. Relative uplift is evidence only; weighted ranking and ML deferred. Optional held-out comparison and actual coverage check before demo; no automatic fallback. See DESIGN_AND_SCALABILITY.md for full comparison.
+Backend JSON responses round trip quantities to whole integers; missing values remain null. Scoring, ranking and threshold comparisons retain full precision before serialization. Percentages and weather measurements retain decimals. Hourly values and window totals are rounded independently, so displayed hourly figures can differ slightly from a displayed total.
 
-NYC replaces Chicago after measured API failures; monthly Parquet is fast to download but requires the pinned Go Parquet reader and temporary disk. Top 20 limits weather quota and excludes other zones; disclose scope. All-zone support is a configuration/reseed operation with additional quota and performance validation. No runtime redesign.
+## Alternatives and history
 
-## Dataset decision and measured experiments
-Chicago TNP was the original source. Basic date-filtered retrieval (5 rows) succeeded in 1.294196s; single-day COUNT and seven-day aggregation timed out at 60s with no response. Five-column CSV returned 23,259 parsed rows in an incomplete 60s response (735,914 transferred bytes, 2.299 MiB local); two-column CSV requested 10,000 rows in 13.675634s (HTTP 200, 14,405 transferred bytes; actual row count not verified). The attempted bulk export endpoint returned HTTP 410 in 1.562915s; other exports were not ruled out. NYC January 2022 Yellow Taxi Parquet downloaded 38,139,949 bytes in 3.466139s; HVFHV downloaded 374,619,188 bytes in 31.026937s, both HTTP 200. These are user-measured download experiments, not controlled database comparisons. HVFHV is selected for marketplace relevance; Yellow Taxi is smaller but less directly representative. Go Parquet aggregation on a full official month, official zone metadata and live weather coverage remain unverified. Four years and 20 zones are initial scope, not proven optimal. More trips per hour do not increase the number of independent rainy hours.
+The fixed-season comparison was chosen for explainability over exact-date, monthly, rolling-window or machine-learning approaches; no measured superiority is claimed. The selection was the user's edited 20-zone list, not an automatically selected top-20 list. See [recommendation alternatives](DESIGN_AND_SCALABILITY.md#recommendation-design-history-alternatives-and-final-decision) and [AI decision history](MY_REASONING.md#earlier-discussions-and-decisions) for the original discussion and source-retrieval experiments.

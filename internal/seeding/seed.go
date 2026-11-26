@@ -1,4 +1,4 @@
-// Package seeding validates prepared JSON and initializes the database.
+// Package seeding loads prepared JSON into the database.
 package seeding
 
 import (

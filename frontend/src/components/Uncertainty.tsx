@@ -1,4 +1,4 @@
-﻿import type { Recommendation } from './types';
+﻿import type { Recommendation } from '../types/recommendation';
 
 // Keep warnings focused on the information a controller needs before acting.
 function contextualWarnings(result: Recommendation) {

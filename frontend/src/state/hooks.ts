@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getInsights, getRecommendation } from './api';
-import type { Insights, Recommendation } from './types';
+import { getInsights, getRecommendation } from '../api/client';
+import type { Insights, Recommendation } from '../types/recommendation';
 
 // Poll the API and hide saved recommendations as soon as their validity ends.
 export function useRecommendation() {

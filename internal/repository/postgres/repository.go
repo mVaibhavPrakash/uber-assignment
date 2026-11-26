@@ -96,7 +96,7 @@ func (r *Repository) AggregateHourly(ctx context.Context, q repository.Historica
 	return statistics, nil
 }
 
-// ExplainHistorical is an adapter-specific inspection tool, not a business-layer
+// It is an adapter-specific inspection tool, not a business-layer
 // repository method. It executes the identical SQL used by AggregateHourly.
 func (r *Repository) ExplainHistorical(ctx context.Context, q repository.HistoricalQuery) ([]string, error) {
 	if err := validQuery(q); err != nil {
