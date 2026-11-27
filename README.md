@@ -10,6 +10,8 @@ Historical samples are grouped by zone, exact ISO day of week, and New York loca
 
 ## Follow one recommendation
 
+Below the primary card, **Zone impact ranking** shows the five highest assessed estimates and the number of zones meeting the intervention threshold across the full list. Select a row to inspect its hourly evidence. **View all zones** also includes zones with unknown impact. The ranking and threshold labels use the estimates before rounding to whole trips.
+
 1. At startup, PostgreSQL calculates the dry and rainy trip averages and sample counts for each group. [Historical query](internal/repository/postgres/historical.sql)
 2. On a scheduler tick, `ComputeAndPublish` reads the cached forecast and matches each upcoming hour to its historical group. [Recommendation manager](internal/recommendation/service.go)
 3. `estimateHourTrips` decides whether the hour has zero, estimated, or unknown rain impact. [Hourly rules](internal/recommendation/hour.go)
@@ -159,6 +161,8 @@ The intervention screenshot was captured using explicitly labeled development in
 go test ./...
 go vet ./...
 go build ./...
+npm run lint --prefix frontend
+npm run format:check --prefix frontend
 npm run build --prefix frontend
 ```
 

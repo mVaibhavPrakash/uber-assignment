@@ -37,10 +37,11 @@ func (area AreaEvidence) MarshalJSON() ([]byte, error) {
 	type fields AreaEvidence
 	return json.Marshal(struct {
 		fields
-		Baseline   *int64 `json:"baseline_trips"`
-		Estimated  *int64 `json:"estimated_trips"`
-		Additional *int64 `json:"additional_trips"`
-	}{fields(area), roundNullableTrips(area.Baseline), roundNullableTrips(area.Estimated), roundNullableTrips(area.Additional)})
+		Baseline        *int64   `json:"baseline_trips"`
+		Estimated       *int64   `json:"estimated_trips"`
+		Additional      *int64   `json:"additional_trips"`
+		AdditionalExact *float64 `json:"additional_trips_exact"`
+	}{fields(area), roundNullableTrips(area.Baseline), roundNullableTrips(area.Estimated), roundNullableTrips(area.Additional), area.Additional})
 }
 
 // MarshalJSON keeps recommendation-level trip quantities consistent with area and hourly responses.
@@ -48,7 +49,8 @@ func (result Result) MarshalJSON() ([]byte, error) {
 	type fields Result
 	return json.Marshal(struct {
 		fields
-		Threshold *int64 `json:"threshold_additional_trips"`
-		Highest   *int64 `json:"highest_modeled_additional_trips"`
-	}{fields(result), roundNullableTrips(&result.Threshold), roundNullableTrips(result.HighestModeledAdditional)})
+		Threshold      *int64  `json:"threshold_additional_trips"`
+		Highest        *int64  `json:"highest_modeled_additional_trips"`
+		ThresholdExact float64 `json:"threshold_additional_trips_exact"`
+	}{fields(result), roundNullableTrips(&result.Threshold), roundNullableTrips(result.HighestModeledAdditional), result.Threshold})
 }
