@@ -2,11 +2,17 @@ package tests
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"os"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"mobilitycontrolroom/database/migrations"
 	"mobilitycontrolroom/internal/domain"
 	scoring "mobilitycontrolroom/internal/domain/recommendation"
 	"mobilitycontrolroom/internal/repository/postgres"
@@ -14,6 +20,45 @@ import (
 	"mobilitycontrolroom/internal/usecase/recommendation"
 	"mobilitycontrolroom/internal/usecase/weather"
 )
+
+func openTestDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL for the PostgreSQL integration test")
+	}
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	schema := fmt.Sprintf("business_evidence_%d", time.Now().UnixNano())
+	quoted := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := admin.Exec(cleanup, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	})
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := pool.Exec(ctx, migrations.Up); err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}
 
 type fixedForecast domain.ForecastSnapshot
 

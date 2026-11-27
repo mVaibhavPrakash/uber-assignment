@@ -142,7 +142,7 @@ See [architecture and package responsibilities](DESIGN_AND_SCALABILITY.md#archit
 | Prepared public dataset and offline preparation boundary | [data/README.md](data/README.md) |
 | Executable schema and SQL | [migrations](database/migrations/), [historical aggregation](internal/repository/postgres/historical.sql) |
 | Dependencies and configuration | [go.mod](go.mod), [go.sum](go.sum), [frontend/package.json](frontend/package.json), [lockfile](frontend/package-lock.json), [.env.example](.env.example), [compose.yaml](compose.yaml) |
-| Four focused automated tests | [recommendations](tests/recommendation_test.go), [SQL evidence](tests/historical_test.go), [forecast precision](tests/forecast_precision_test.go), [provider failure](tests/weather_test.go) |
+| Three focused automated tests | [recommendations](tests/recommendation_test.go), [PostgreSQL evidence and forecast precision](tests/forecast_precision_test.go), [provider failure](tests/weather_test.go) |
 | Working product demonstration | Screenshots below; the two Docker commands above run the application locally. |
 
 Reviewers can run the application locally using the Docker commands above.
@@ -170,7 +170,7 @@ npm run lint --prefix frontend
 npm run build --prefix frontend
 ```
 
-Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include the historical SQL and forecast persistence tests. These tests create and remove their own temporary schemas and skip when the variable is absent. The race detector requires a supported C toolchain.
+Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database to include the historical SQL and forecast persistence check. It creates and removes a temporary schema and skips when the variable is absent. The race detector requires a supported C toolchain.
 
 The final checks passed with disposable PostgreSQL 17 Docker volumes and controlled weather fixtures. They covered fresh setup, skipping already initialized data, rejection of partial initialization, replacement of an obsolete schema by explicit reset, and rollback on a failed import with and without reset. The API exited cleanly on Docker stop.
 

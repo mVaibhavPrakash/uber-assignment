@@ -155,16 +155,15 @@ I revisited the recommendation package to reduce helper calls and repeated selec
 
 For this refactor, a temporary comparison against the original package matched 2,000 generated scoring cases at full precision and in serialized JSON, including messages and errors. Additional comparisons checked empty caches, version changes, freshness, expiry, weather failures and cancellation. These were local refactor checks, not additional retained tests or forecast-accuracy validation.
 
-The submitted suite keeps four focused tests on the decision, its SQL inputs, forecast precision after restore and a provider outage. The decision test uses one rainy hour and one dry hour with no baseline.
+The submitted suite keeps focused tests on the decision, a PostgreSQL round trip, and a provider outage. The decision test uses one rainy hour and one dry hour with no baseline.
 
 | Test | Decision it protects |
 |---|---|
 | Assessed-zone ranking | A zone with insufficient rainy samples neither blocks nor outranks an eligible zone; the result reports partial coverage and the expected trip calculation. |
-| Historical SQL | PostgreSQL groups below-threshold and qualifying rain correctly, excludes snow and returns the expected historical comparison. |
-| Forecast precision after restore | The adjacent values below and above 0.5 mm and the threshold itself survive PostgreSQL storage and yield the same recommendation as the live forecast. |
+| PostgreSQL evidence and forecast precision | SQL separates below-threshold from qualifying rain. The adjacent values below and above 0.5 mm and the threshold itself survive forecast storage and yield the same recommendation after restore. |
 | Provider failure | Bounded retries preserve a usable prior forecast, while expired weather is rejected. |
 
-The PostgreSQL tests use isolated schemas and require `TEST_DATABASE_URL`. Checks for cache concurrency, serialization, configuration and daylight-saving transitions ran during development. The submitted suite focuses its repeatable coverage on the weather-to-decision path.
+The PostgreSQL test uses an isolated schema and requires `TEST_DATABASE_URL`. Checks for cache concurrency, serialization, configuration and daylight-saving transitions ran during development. The submitted suite focuses its repeatable coverage on the weather-to-decision path.
 
 Validation performed during development included Go tests, vet/build, frontend builds, PostgreSQL checks, live API requests, UI rendering checks, and Docker setup checks. Earlier broader checks are development history rather than retained automated coverage. Fictional rain scenarios are explicitly labeled and use the real scoring function; they do not demonstrate live prediction accuracy.
 

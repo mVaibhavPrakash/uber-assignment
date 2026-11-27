@@ -186,4 +186,4 @@ The implementation assumes one application instance. Multiple replicas would req
 
 The separate [rain demo](../tools/rain-demo/main.go) supplies fictional inputs to the same scoring engine and API handlers. It computes on request without the scheduler, database or provider. Its API/UI ports are 8081/3001, separate from the normal 8080/3000 application. It demonstrates calculation and presentation rather than the production refresh lifecycle.
 
-The four retained tests cover historical grouping and exact forecast round trips in PostgreSQL, an actionable recommendation with partial coverage, and bounded retries, reuse and expiry during an outage. See the [final validation results](../README.md#validation) for the broader development checks.
+The tests cover historical rain classification and exact forecast round trips in PostgreSQL, an actionable recommendation with partial coverage, and bounded retries, reuse and expiry during an outage. See the [final validation results](../README.md#validation) for the broader development checks.

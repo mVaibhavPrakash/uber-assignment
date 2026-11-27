@@ -49,7 +49,7 @@ The controller view shows one primary action, coverage, supporting hourly eviden
 
 Trip quantities are rounded only when serialized to JSON. Scoring and ranking retain full precision, missing values remain null, and percentages and weather measurements retain decimals. Hourly estimates and window totals are rounded independently, so displayed values may not add up exactly.
 
-The retained tests cover historical SQL grouping, the rainfall precision boundary, partial-coverage recommendations and provider failure. Separate development checks covered daylight-saving transitions, Docker setup and browser interactions. These checks establish application behavior. Predictive accuracy, causal rain effects and the operational impact of acting on a recommendation remain unmeasured.
+The tests cover a recommendation with partial coverage, a PostgreSQL round trip that exercises historical rain classification and forecast precision, and provider failure. Separate development checks covered daylight-saving transitions, Docker setup and browser interactions. These checks establish application behavior. Predictive accuracy, causal rain effects and the operational impact of acting on a recommendation remain unmeasured.
 
 The separate rain demo uses explicitly fictional inputs and the actual scoring engine. It demonstrates calculation and presentation, not live forecast accuracy or the production refresh lifecycle. Authentication, supply-demand integration, additional weather models and outcome evaluation are outside the implemented scope.
 
