@@ -88,4 +88,6 @@ Aggregating history once keeps the request path small, at the cost of restarting
 
 ## AI collaboration
 
+Wrote tradeoffs, reasoning documentation manually but asked AI to refine it and make more presentable without giving its own judgement.
+
 I made the product and engineering decisions, prepared the dataset, and did the initial implementation, review and testing. I used ChatGPT to discuss design options and Codex to verify behavior, suggest improvements, and implement selected changes at my request. I implemented many suggestions myself and reviewed the changes Codex made before deciding what to keep. [AI-use disclosure](MY_REASONING.md#ai-use-disclosure)
