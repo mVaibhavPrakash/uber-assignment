@@ -1,11 +1,13 @@
-package weather
+package openmeteo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"mobilitycontrolroom/internal/repository"
 	"time"
+
+	"mobilitycontrolroom/internal/domain"
 )
 
 type providerResponse struct {
@@ -26,8 +28,7 @@ type providerResponse struct {
 }
 
 // Matches each location and hourly weather value to our zone and time.
-func parseForecastHours(raw []byte, areas []repository.Area, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
-	// Step 1: Read either one location object or a list of location objects.
+func parseForecastHours(ctx context.Context, raw []byte, areas []domain.Area, start time.Time, forecastHours int) ([]domain.ForecastHour, error) {
 	responses, err := decodeProviderLocations(raw)
 	if err != nil {
 		return nil, err
@@ -36,17 +37,18 @@ func parseForecastHours(raw []byte, areas []repository.Area, start time.Time, fo
 		return nil, fmt.Errorf("forecast response count %d differs from requested locations %d", len(responses), len(areas))
 	}
 
-	// Step 2: Match locations in request order and collect their hourly values.
-	rows := make([]repository.ForecastHour, 0, len(areas)*forecastHours)
+	var rows []domain.ForecastHour
 	for i, response := range responses {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := response.validateLocationOrderAndUnits(i); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("forecast area %d: %w", areas[i].ID, err)
 		}
-		hours, err := response.alignForecastHours(areas[i].ID, start, forecastHours)
+		rows, err = response.appendForecastHours(rows, areas[i].ID, start, forecastHours)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("forecast area %d: %w", areas[i].ID, err)
 		}
-		rows = append(rows, hours...)
 	}
 	return rows, nil
 }
@@ -81,39 +83,37 @@ func (response providerResponse) validateLocationOrderAndUnits(index int) error 
 }
 
 // Assigns each weather value to the hour it describes for one zone.
-func (response providerResponse) alignForecastHours(areaID int, start time.Time, forecastHours int) ([]repository.ForecastHour, error) {
+func (response providerResponse) appendForecastHours(rows []domain.ForecastHour, areaID int, start time.Time, forecastHours int) ([]domain.ForecastHour, error) {
 	h := response.Hourly
 	n := len(h.Time)
-	if n == 0 || len(h.Rain) != n || len(h.Snow) != n || len(h.Probability) != n {
+	if n < forecastHours || len(h.Rain) != n || len(h.Snow) != n || len(h.Probability) != n {
 		return nil, fmt.Errorf("incomplete forecast parallel arrays")
 	}
-	positions, err := indexContiguousHourlyTimestamps(h.Time)
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]repository.ForecastHour, 0, forecastHours)
-	// The API labels these values at the end of the hour. For example,
-	// values labelled 11:00 describe the interval starting at 10:00.
-	for hour := range forecastHours {
-		at := start.Add(time.Duration(hour) * time.Hour)
-		index, ok := positions[at.Add(time.Hour).Unix()]
-		if !ok || h.Rain[index] == nil || h.Snow[index] == nil || h.Probability[index] == nil {
-			return nil, fmt.Errorf("missing mandatory forecast hour for area %d", areaID)
-		}
-		rows = append(rows, repository.ForecastHour{AreaID: areaID, HourStart: at, RainMM: *h.Rain[index], SnowfallCM: *h.Snow[index], PrecipitationProbability: *h.Probability[index]})
-	}
-	return rows, nil
-}
 
-// Checks that timestamps are complete, hourly and in order,
-// then records where each timestamp appears in the response arrays.
-func indexContiguousHourlyTimestamps(times []*int64) (map[int64]int, error) {
-	positions := make(map[int64]int, len(times))
-	for i, at := range times {
-		if at == nil || *at%3600 != 0 || i > 0 && *at-*times[i-1] != 3600 {
+	// The API labels values at the end of the hour. For example, 11:00
+	// describes the interval starting at 10:00.
+	firstEnd := start.Add(time.Hour).Unix()
+	firstIndex := -1
+	for i, at := range h.Time {
+		if at == nil || *at%3600 != 0 || (i > 0 && (*at <= *h.Time[i-1] || *at-*h.Time[i-1] != 3600)) {
 			return nil, fmt.Errorf("forecast timestamps missing, unaligned or unordered")
 		}
-		positions[*at] = i
+		if *at == firstEnd {
+			firstIndex = i
+		}
 	}
-	return positions, nil
+	if firstIndex < 0 || forecastHours > n-firstIndex {
+		return nil, fmt.Errorf("missing mandatory forecast hours")
+	}
+	for hour := range forecastHours {
+		index := firstIndex + hour
+		if h.Rain[index] == nil || h.Snow[index] == nil || h.Probability[index] == nil {
+			return nil, fmt.Errorf("missing mandatory forecast hour")
+		}
+		rows = append(rows, domain.ForecastHour{
+			AreaID: areaID, HourStart: start.Add(time.Duration(hour) * time.Hour),
+			RainMM: *h.Rain[index], SnowfallCM: *h.Snow[index], PrecipitationProbability: *h.Probability[index],
+		})
+	}
+	return rows, nil
 }

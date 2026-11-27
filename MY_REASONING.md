@@ -155,15 +155,16 @@ I revisited the recommendation package to reduce helper calls and repeated selec
 
 For this refactor, a temporary comparison against the original package matched 2,000 generated scoring cases at full precision and in serialized JSON, including messages and errors. Additional comparisons checked empty caches, version changes, freshness, expiry, weather failures and cancellation. These were local refactor checks, not additional retained tests or forecast-accuracy validation.
 
-The initial plan called for three focused top-level tests. As features were refined, the recommendation test accumulated nested cases for eligibility, serialization, cache ownership, concurrent reads and expiry. Keeping three top-level names did not keep the actual suite small. I first narrowed the suite to four tests. For the final submission I kept one scenario each for the decision, its SQL inputs and a weather outage. The decision test uses one rainy hour and one dry hour with no baseline.
+The submitted suite keeps four focused tests on the decision, its SQL inputs, forecast precision after restore and a provider outage. The decision test uses one rainy hour and one dry hour with no baseline.
 
 | Test | Decision it protects |
 |---|---|
 | Assessed-zone ranking | A zone with insufficient rainy samples neither blocks nor outranks an eligible zone; the result reports partial coverage and the expected trip calculation. |
 | Historical SQL | PostgreSQL groups below-threshold and qualifying rain correctly, excludes snow and returns the expected historical comparison. |
+| Forecast precision after restore | The adjacent values below and above 0.5 mm and the threshold itself survive PostgreSQL storage and yield the same recommendation as the live forecast. |
 | Provider failure | Bounded retries preserve a usable prior forecast, while expired weather is rejected. |
 
-The SQL test uses an isolated schema and requires TEST_DATABASE_URL. Earlier cache/concurrency, serialization and nested scenario checks were removed to keep the submitted suite focused. That accepts less regression coverage for response shaping and concurrency; it does not remove their runtime guarantees or ownership requirements.
+The PostgreSQL tests use isolated schemas and require `TEST_DATABASE_URL`. Checks for cache concurrency, serialization, configuration and daylight-saving transitions ran during development. The submitted suite focuses its repeatable coverage on the weather-to-decision path.
 
 Validation performed during development included Go tests, vet/build, frontend builds, PostgreSQL checks, live API requests, UI rendering checks, and Docker setup checks. Earlier broader checks are development history rather than retained automated coverage. Fictional rain scenarios are explicitly labeled and use the real scoring function; they do not demonstrate live prediction accuracy.
 
@@ -185,7 +186,7 @@ I replaced the Go seed command and package with `database/seed.psql`, run by the
 
 Reset remains explicit but now recreates the three assignment tables inside the import transaction instead of dropping the database. It refuses other connected clients. This allows failed reset/import attempts to roll back the prior tables and data together. It also makes setup intentionally PostgreSQL-specific. Recommendation scoring, historical grouping and forecast behavior are unchanged.
 
-### Making repeated reviewer setup succeed
+### Earlier repeat setup experiment
 
 After the CSV conversion, rerunning the documented setup command failed because the database already contained data. That protected the existing dataset, but made a normal reviewer action look like a broken installation. I changed setup to load empty tables, report a successful skip when the expected zones and history are already present, and reject partial or different data. Reset still requires an explicit choice.
 
@@ -206,6 +207,12 @@ The terminal debug instructions also exposed a configuration conflict. PowerShel
 Local comparisons matched 2,000 scoring cases at full precision and in JSON. I also checked scheduler timing around the hour boundary, forecast recovery after an uncertain commit, and the rendered decision cards. These checks supplemented the tests retained at that stage.
 
 ## Technical challenges and remaining limits
+
+Final validation reproduced a precision error in a disposable Docker stack. A forecast of `0.49999999` mm was below the 0.5 mm threshold in Go, but `REAL` stored it as `0.5`. Restarting with the provider offline changed the decision reason for the same forecast version. Rain and snowfall now use `DOUBLE PRECISION` in both forecast and historical storage. The new regression test checks the two adjacent values around 0.5 and 0.5 itself. The Docker restart check confirmed the same recommendation before and after restore, apart from the computation timestamp.
+
+The final seed script replaces the earlier full-data comparison with direct CSV imports and a populated-table check. A repeat setup leaves existing data and forecasts alone. An obsolete experimental schema is replaced through explicit reset after the application is stopped. The Docker checks also confirmed that a failed CSV import during reset restores the original tables, data and forecast.
+
+The runtime rejects a timezone other than New York because the bundled history is keyed to that timezone. Forecasts and planning intervals stay in UTC across daylight-saving transitions. The frontend ranks zones by exact estimates and rounds for display using the existing API fields. It binds the selected zone's evidence to the forecast version and planning window.
 
 The most demanding parts were aligning historical and forecast intervals with New York calendar fields, handling sparse rainy evidence without confusing missing values with zero, and keeping persisted forecasts, cached recommendations and UI insights consistent across refreshes and expiry. Separating offline preparation from runtime setup also required keeping the reviewer workflow reproducible without downloading raw history.
 

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"mobilitycontrolroom/internal/domain"
-	"mobilitycontrolroom/internal/repository"
 )
 
 // Estimates trips for one zone and hour using its forecast and past trips.
@@ -54,7 +53,7 @@ func estimateHourTrips(areaID int, at time.Time, input HourInput, options Option
 	return evidence
 }
 
-func dryHistoryIssue(areaID int, hour HourEvidence, history *repository.HourlyStats, minSamples int64) string {
+func dryHistoryIssue(areaID int, hour HourEvidence, history *domain.HourlyStats, minSamples int64) string {
 	switch {
 	case history == nil || history.AreaID != areaID || history.DayOfWeek != hour.DayOfWeek || history.HourOfDay != hour.LocalHour:
 		return "missing_history"
@@ -66,7 +65,7 @@ func dryHistoryIssue(areaID int, hour HourEvidence, history *repository.HourlySt
 }
 
 // Adds the historical numbers shown in hourly insights, keeping missing values null.
-func copyHistoricalEvidence(hour *HourEvidence, history *repository.HourlyStats) {
+func copyHistoricalEvidence(hour *HourEvidence, history *domain.HourlyStats) {
 	if history == nil {
 		return
 	}

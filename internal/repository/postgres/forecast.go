@@ -6,19 +6,17 @@ import (
 	"fmt"
 	"time"
 
-	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/domain"
-	"mobilitycontrolroom/internal/repository"
+	"mobilitycontrolroom/internal/usecase/weather"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var _ repository.ForecastRepository = (*Repository)(nil)
-
-func (r *Repository) LoadLatest(ctx context.Context) (repository.ForecastSnapshot, error) {
-	s := repository.ForecastSnapshot{}
+// LoadLatest reads a single committed forecast snapshot.
+func (r *Repository) LoadLatest(ctx context.Context) (domain.ForecastSnapshot, error) {
+	s := domain.ForecastSnapshot{}
 	// A single SELECT sees one committed PostgreSQL snapshot even while another
 	// transaction replaces the whole forecast table.
 	const query = `
@@ -31,41 +29,42 @@ func (r *Repository) LoadLatest(ctx context.Context) (repository.ForecastSnapsho
 		return s, fmt.Errorf("load forecast snapshot: %w", err)
 	}
 	defer rows.Close()
-	areas := []repository.Area{}
+	areas := []domain.Area{}
 	known := map[int]bool{}
 	for rows.Next() {
-		var h repository.ForecastHour
+		var h domain.ForecastHour
 		var version string
 		var fetched time.Time
 		if err = rows.Scan(&h.AreaID, &h.HourStart, &version, &fetched, &h.RainMM, &h.SnowfallCM, &h.PrecipitationProbability); err != nil {
-			return repository.ForecastSnapshot{}, fmt.Errorf("scan forecast row: %w", err)
+			return domain.ForecastSnapshot{}, fmt.Errorf("scan forecast row: %w", err)
 		}
 		if len(s.Hours) == 0 {
 			s.Version = version
 			s.FetchedAt = fetched.UTC()
 		} else if version != s.Version || !fetched.Equal(s.FetchedAt) {
-			return repository.ForecastSnapshot{}, fmt.Errorf("persisted forecast contains mixed versions or fetched times")
+			return domain.ForecastSnapshot{}, fmt.Errorf("persisted forecast contains mixed versions or fetched times")
 		}
 		h.HourStart = h.HourStart.UTC()
 		s.Hours = append(s.Hours, h)
 		if !known[h.AreaID] {
-			areas = append(areas, repository.Area{ID: h.AreaID})
+			areas = append(areas, domain.Area{ID: h.AreaID})
 			known[h.AreaID] = true
 		}
 	}
 	if err = rows.Err(); err != nil {
-		return repository.ForecastSnapshot{}, fmt.Errorf("read forecast snapshot: %w", err)
+		return domain.ForecastSnapshot{}, fmt.Errorf("read forecast snapshot: %w", err)
 	}
 	if len(s.Hours) == 0 {
-		return repository.ForecastSnapshot{}, appErrors.ErrNoSnapshot
+		return domain.ForecastSnapshot{}, domain.ErrNoSnapshot
 	}
 	if err = domain.ValidateForecast(s, areas); err != nil {
-		return repository.ForecastSnapshot{}, fmt.Errorf("invalid persisted forecast: %w", err)
+		return domain.ForecastSnapshot{}, fmt.Errorf("invalid persisted forecast: %w", err)
 	}
 	return s, nil
 }
 
-func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastSnapshot) (err error) {
+// ReplaceSnapshot atomically saves a complete forecast for the current zones.
+func (r *Repository) ReplaceSnapshot(ctx context.Context, s domain.ForecastSnapshot) (err error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin forecast replacement: %w", err)
@@ -78,10 +77,10 @@ func (r *Repository) ReplaceSnapshot(ctx context.Context, s repository.ForecastS
 	if err != nil {
 		return err
 	}
-	if err = domain.ValidateForecast(s, areas); err != nil {
-		return err
+	if err := domain.ValidateForecast(s, areas); err != nil {
+		return fmt.Errorf("validate forecast replacement: %w", err)
 	}
-	if err = copyForecast(ctx, tx, s); err != nil {
+	if err := copyForecast(ctx, tx, s); err != nil {
 		return err
 	}
 	return commitForecast(ctx, tx)
@@ -99,12 +98,15 @@ func lockForecastPublication(ctx context.Context, tx pgx.Tx) error {
 }
 
 // Replaces all forecast rows inside the caller's transaction.
-func copyForecast(ctx context.Context, tx pgx.Tx, s repository.ForecastSnapshot) error {
-	var err error
-	if _, err = tx.Exec(ctx, `DELETE FROM weather_forecasts`); err != nil {
+func copyForecast(ctx context.Context, tx pgx.Tx, s domain.ForecastSnapshot) error {
+	id, err := uuid.Parse(s.Version)
+	if err != nil {
+		return fmt.Errorf("encode forecast version: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM weather_forecasts`); err != nil {
 		return fmt.Errorf("delete old forecast: %w", err)
 	}
-	version := pgtype.UUID{Bytes: [16]byte(uuid.MustParse(s.Version)), Valid: true}
+	version := pgtype.UUID{Bytes: [16]byte(id), Valid: true}
 	columns := []string{
 		"area_id", "hour_start", "forecast_version", "fetched_at",
 		"rain_mm", "snowfall_cm", "precipitation_probability",
@@ -139,7 +141,7 @@ func commitForecast(ctx context.Context, tx pgx.Tx) error {
 		if errors.Is(err, pgx.ErrTxCommitRollback) {
 			return wrapped
 		}
-		return errors.Join(appErrors.ErrCommitAmbiguous, wrapped)
+		return errors.Join(weather.ErrCommitAmbiguous, wrapped)
 	}
 	return nil
 }

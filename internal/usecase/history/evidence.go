@@ -1,27 +1,27 @@
-// Package cache contains immutable typed runtime snapshots.
-package cache
+package history
 
 import (
+	"context"
 	"fmt"
-	"mobilitycontrolroom/internal/repository"
+
+	"mobilitycontrolroom/internal/domain"
 )
 
-type HistoricalKey struct {
+type historicalKey struct {
 	AreaID, DayOfWeek, HourOfDay int
 }
 
-type HistoricalSnapshot struct {
-	statistics map[HistoricalKey]repository.HourlyStats
-}
+type historicalSnapshot map[historicalKey]domain.HourlyStats
 
-type HistoricalCoverage struct {
+// Coverage counts historical groups with enough dry and rainy observations.
+type Coverage struct {
 	Groups, DrySupportedGroups, RainSupportedGroups int
 }
 
-// NewHistorical indexes trusted database aggregates. The maximum size is
+// newHistorical indexes trusted database aggregates. The maximum size is
 // bounded by the seeded area's weekday/hour combinations. Caller-owned
 // slices and nullable pointers are copied both on insertion and lookup.
-func NewHistorical(areas []repository.Area, rows []repository.HourlyStats) (*HistoricalSnapshot, error) {
+func newHistorical(ctx context.Context, areas []domain.Area, rows []domain.HourlyStats) (historicalSnapshot, error) {
 	known := make(map[int]bool, len(areas))
 	for _, area := range areas {
 		if area.ID <= 0 || known[area.ID] {
@@ -35,21 +35,24 @@ func NewHistorical(areas []repository.Area, rows []repository.HourlyStats) (*His
 	if len(rows) > len(known)*7*24 {
 		return nil, fmt.Errorf("historical snapshot exceeds calendar bound")
 	}
-	snapshot := &HistoricalSnapshot{statistics: make(map[HistoricalKey]repository.HourlyStats, len(rows))}
+	snapshot := make(historicalSnapshot, len(rows))
 	for _, row := range rows {
-		key := HistoricalKey{AreaID: row.AreaID, DayOfWeek: row.DayOfWeek, HourOfDay: row.HourOfDay}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		key := historicalKey{AreaID: row.AreaID, DayOfWeek: row.DayOfWeek, HourOfDay: row.HourOfDay}
 		if !known[row.AreaID] || row.DayOfWeek < 1 || row.DayOfWeek > 7 || row.HourOfDay < 0 || row.HourOfDay > 23 {
 			return nil, fmt.Errorf("invalid historical calendar key %+v", key)
 		}
-		if _, exists := snapshot.statistics[key]; exists {
+		if _, exists := snapshot[key]; exists {
 			return nil, fmt.Errorf("duplicate historical calendar key %+v", key)
 		}
-		snapshot.statistics[key] = cloneHourlyStats(row)
+		snapshot[key] = cloneHourlyStats(row)
 	}
 	return snapshot, nil
 }
 
-func cloneHourlyStats(row repository.HourlyStats) repository.HourlyStats {
+func cloneHourlyStats(row domain.HourlyStats) domain.HourlyStats {
 	row.DryMean = cloneFloatPointer(row.DryMean)
 	row.RainMean = cloneFloatPointer(row.RainMean)
 	row.AbsoluteUplift = cloneFloatPointer(row.AbsoluteUplift)
@@ -67,17 +70,17 @@ func cloneFloatPointer(value *float64) *float64 {
 	return &copyData
 }
 
-func (s *HistoricalSnapshot) Get(key HistoricalKey) (repository.HourlyStats, bool) {
-	row, ok := s.statistics[key]
+func (s historicalSnapshot) get(key historicalKey) (domain.HourlyStats, bool) {
+	row, ok := s[key]
 	return cloneHourlyStats(row), ok
 }
 
-func (s *HistoricalSnapshot) Coverage(minSamples int64) HistoricalCoverage {
+func (s historicalSnapshot) coverage(minSamples int64) Coverage {
 	if minSamples < 1 {
 		minSamples = 1
 	}
-	result := HistoricalCoverage{Groups: len(s.statistics)}
-	for _, row := range s.statistics {
+	result := Coverage{Groups: len(s)}
+	for _, row := range s {
 		if row.DrySamples >= minSamples {
 			result.DrySupportedGroups++
 		}

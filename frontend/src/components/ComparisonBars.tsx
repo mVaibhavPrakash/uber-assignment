@@ -5,6 +5,7 @@ import type { AreaEvidence } from '../types/recommendation';
 export default function ComparisonBars({ evidence }: { evidence: AreaEvidence }) {
     const baseline = evidence.baseline_trips;
     const estimated = evidence.estimated_trips;
+    const additional = formatSignedNumber(evidence.additional_trips);
     if (!evidence.assessable) {
         return (
             <p className="muted">
@@ -17,10 +18,8 @@ export default function ComparisonBars({ evidence }: { evidence: AreaEvidence })
     if (baseline == null || estimated == null) {
         return (
             <p className="muted">
-                Typical and expected trip totals are unavailable for the full window.{' '}
-                {evidence.additional_trips === 0
-                    ? 'No additional rain-related trips are projected.'
-                    : `Modeled rain-related change: ${formatSignedNumber(evidence.additional_trips)} trips.`}
+                Typical and estimated trip totals are unavailable for the full window. Estimated
+                additional trips: {additional}.
             </p>
         );
     }
@@ -33,7 +32,7 @@ export default function ComparisonBars({ evidence }: { evidence: AreaEvidence })
             {(
                 [
                     ['baseline', 'Typical dry-weather trips', baseline],
-                    ['estimated', 'Expected trips with current forecast', estimated],
+                    ['estimated', 'Estimated trips with current forecast', estimated],
                 ] as const
             ).map(([kind, label, value]) => (
                 <div className="bar-row" key={kind}>
@@ -56,9 +55,7 @@ export default function ComparisonBars({ evidence }: { evidence: AreaEvidence })
             ))}
 
             <p className="muted comparison-caption">
-                {evidence.additional_trips === 0
-                    ? 'No additional rain-related trip volume is projected.'
-                    : `${formatSignedNumber(evidence.additional_trips)} completed trips compared with typical dry-weather trips.`}
+                Estimated additional trips: {additional} compared with typical dry-weather trips.
             </p>
         </div>
     );

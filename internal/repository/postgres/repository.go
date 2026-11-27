@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math"
 
-	"mobilitycontrolroom/internal/repository"
+	"mobilitycontrolroom/internal/domain"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,14 +16,14 @@ import (
 //go:embed historical.sql
 var historicalSQL string
 
+// Repository stores forecasts and reads historical evidence from PostgreSQL.
 type Repository struct{ pool *pgxpool.Pool }
 
+// New creates a repository using the caller's pool.
 func New(pool *pgxpool.Pool) *Repository { return &Repository{pool} }
 
-var _ repository.AreaRepository = (*Repository)(nil)
-var _ repository.HistoricalRepository = (*Repository)(nil)
-
-func (r *Repository) ListAreas(ctx context.Context) ([]repository.Area, error) {
+// ListAreas returns every monitored zone in ID order.
+func (r *Repository) ListAreas(ctx context.Context) ([]domain.Area, error) {
 	return listAreas(ctx, r.pool)
 }
 
@@ -33,7 +33,7 @@ type areaReader interface {
 }
 
 // listAreas is the single place that reads zone details from PostgreSQL.
-func listAreas(ctx context.Context, reader areaReader) ([]repository.Area, error) {
+func listAreas(ctx context.Context, reader areaReader) ([]domain.Area, error) {
 	const query = `
 		SELECT id, name, latitude, longitude
 		FROM community_areas
@@ -43,29 +43,23 @@ func listAreas(ctx context.Context, reader areaReader) ([]repository.Area, error
 		return nil, fmt.Errorf("list areas: %w", err)
 	}
 
-	return collectRows(rows, "area", "areas", func(area *repository.Area) error {
+	return collectRows(rows, "area", "areas", func(area *domain.Area) error {
 		return rows.Scan(&area.ID, &area.Name, &area.Latitude, &area.Longitude)
 	})
 }
 
-func validateHistoricalQuery(q repository.HistoricalQuery) error {
-	if q.MinRainfallMM <= 0 || math.IsNaN(q.MinRainfallMM) || math.IsInf(q.MinRainfallMM, 0) {
-		return fmt.Errorf("rainfall threshold must be finite and positive")
-	}
-	return nil
-}
-
-func (r *Repository) AggregateHourly(ctx context.Context, q repository.HistoricalQuery) ([]repository.HourlyStats, error) {
-	if err := validateHistoricalQuery(q); err != nil {
-		return nil, err
+// AggregateHourly compares trips below and at or above the rainfall threshold.
+func (r *Repository) AggregateHourly(ctx context.Context, minRainfallMM float64) ([]domain.HourlyStats, error) {
+	if minRainfallMM <= 0 || math.IsNaN(minRainfallMM) || math.IsInf(minRainfallMM, 0) {
+		return nil, fmt.Errorf("rainfall threshold must be finite and positive")
 	}
 
-	rows, err := r.pool.Query(ctx, historicalSQL, q.MinRainfallMM)
+	rows, err := r.pool.Query(ctx, historicalSQL, minRainfallMM)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate historical hours: %w", err)
 	}
 
-	return collectRows(rows, "historical group", "historical groups", func(s *repository.HourlyStats) error {
+	return collectRows(rows, "historical group", "historical groups", func(s *domain.HourlyStats) error {
 		return rows.Scan(&s.AreaID, &s.DayOfWeek, &s.HourOfDay, &s.DryMean, &s.DrySamples, &s.RainMean, &s.RainSamples, &s.RainStdDev, &s.AbsoluteUplift, &s.PercentageUplift)
 	})
 }

@@ -32,7 +32,7 @@ export default function ZoneImpactRanking({ result, ranked, selectedID, onSelect
                 >
                     <span className="zone-name">{formatAreaName(summary.area.name)}</span>
                     <strong className="zone-impact">
-                        <span className="sr-only">Expected extra trips: </span>
+                        <span className="sr-only">Estimated additional trips: </span>
                         {summary.assessable
                             ? formatSignedNumber(summary.additional_trips)
                             : 'Unknown'}
@@ -49,7 +49,7 @@ export default function ZoneImpactRanking({ result, ranked, selectedID, onSelect
             <p className="muted">
                 {ranked.length === 0
                     ? 'No zones could be assessed for this window.'
-                    : `${qualifying} of ${ranked.length} assessed at or above the intervention threshold (${threshold.toLocaleString('en-US', { maximumSignificantDigits: 15 })} extra trips).`}
+                    : `${qualifying} of ${ranked.length} assessed at or above the intervention threshold (${threshold.toLocaleString('en-US', { maximumSignificantDigits: 15 })} additional trips).`}
                 {ranked.length > 0 &&
                     unknown.length > 0 &&
                     ` Insufficient evidence for ${unknown.length} of ${result.areas.length} zones.`}
@@ -60,12 +60,12 @@ export default function ZoneImpactRanking({ result, ranked, selectedID, onSelect
                     <>
                         <div className="zone-columns muted" aria-hidden="true">
                             <span>Zone</span>
-                            <span>Expected extra trips</span>
+                            <span>Estimated additional trips</span>
                             <span>Status</span>
                         </div>
                         <ol
                             className="zone-list"
-                            aria-label="Assessed zones by expected extra trips"
+                            aria-label="Assessed zones by estimated additional trips"
                         >
                             {visibleRanked.map((summary, index) => {
                                 const primary =

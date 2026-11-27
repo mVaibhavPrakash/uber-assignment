@@ -1,4 +1,4 @@
-package weather
+package openmeteo
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -23,33 +22,29 @@ type providerError struct {
 // Calls the endpoint up to MaxAttempts times. Temporary failures wait
 // longer after each attempt; permanent errors stop immediately.
 func (c *Client) requestWithRetries(ctx context.Context, params url.Values) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.GetExternalRequestTimeout())
+	ctx, cancel := context.WithTimeout(ctx, c.options.RequestTimeout)
 	defer cancel()
-	endpoint, err := url.Parse(c.config.GetForecastURL())
-	if err != nil {
-		return nil, err
-	}
+	endpoint := c.endpoint
 	endpoint.RawQuery = params.Encode()
-	delay := min(c.config.GetRetryDelay(), c.config.GetExternalRequestTimeout())
-	for attempt := 1; attempt <= c.config.GetMaxAttempts(); attempt++ {
-		body, retryAfter, err := c.sendForecastRequest(ctx, endpoint.String())
+	delay := min(c.options.RetryDelay, c.options.RequestTimeout)
+	address := endpoint.String()
+	for attempt := 1; ; attempt++ {
+		body, retryAfter, err := c.sendForecastRequest(ctx, address)
 		if err == nil {
 			return body, nil
 		}
-		slog.Warn("weather request failed", "attempt", attempt, "error", err)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if !isRetryableWeatherError(err) || attempt == c.config.GetMaxAttempts() {
-			return nil, fmt.Errorf("fetch weather: %w", err)
+		if !isRetryableWeatherError(err) || attempt == c.options.MaxAttempts {
+			return nil, fmt.Errorf("forecast request attempt %d: %w", attempt, err)
 		}
 		if err := waitForRetryOrCancellation(ctx, retryDelayWithJitter(delay, retryAfter)); err != nil {
 			return nil, err
 		}
 		// Double the next delay, capped at the total request timeout.
-		delay = min(delay, c.config.GetExternalRequestTimeout()/2) * 2
+		delay = min(delay, c.options.RequestTimeout/2) * 2
 	}
-	return nil, fmt.Errorf("weather attempts must be positive")
 }
 
 // Picks a random wait between half and all of the current delay.
@@ -63,7 +58,7 @@ func retryDelayWithJitter(delay, retryAfter time.Duration) time.Duration {
 // Sends one GET with a timeout. It returns the response body or
 // the provider error and how long the provider asks us to wait before retrying.
 func (c *Client) sendForecastRequest(ctx context.Context, endpoint string) ([]byte, time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.config.GetHTTPAttemptTimeout())
+	ctx, cancel := context.WithTimeout(ctx, c.options.AttemptTimeout)
 	defer cancel()
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -136,7 +131,9 @@ func readProviderError(response *http.Response) error {
 	var failure struct {
 		Reason string `json:"reason"`
 	}
-	_ = json.NewDecoder(io.LimitReader(response.Body, 2048)).Decode(&failure)
+	if err := json.NewDecoder(io.LimitReader(response.Body, 2048)).Decode(&failure); err != nil {
+		return &providerError{status: response.StatusCode}
+	}
 	if len(failure.Reason) > 512 {
 		failure.Reason = failure.Reason[:512]
 	}

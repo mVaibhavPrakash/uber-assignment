@@ -1,23 +1,25 @@
-package api
+// Package httpApi serves recommendation summaries and hourly evidence.
+package httpApi
 
 import (
-	"encoding/json"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"time"
 
-	"mobilitycontrolroom/internal/appErrors"
-	"mobilitycontrolroom/internal/recommendation"
-	"mobilitycontrolroom/internal/repository"
+	"mobilitycontrolroom/internal/domain"
+	"mobilitycontrolroom/internal/domain/recommendation"
 )
 
+// Service supplies the published recommendation and monitored zones.
 type Service interface {
-	Areas() []repository.Area
+	Areas() []domain.Area
 	// It shares read-only nested data; response preparation must not mutate it.
 	CurrentRecommendation(time.Time) recommendation.Result
 }
 
+// Handler registers the HTTP API routes and request recovery.
 func Handler(service Service, clock func() time.Time) http.Handler {
 	if clock == nil {
 		clock = time.Now
@@ -29,7 +31,7 @@ func Handler(service Service, clock func() time.Time) http.Handler {
 	mux.HandleFunc("GET /api/areas/{id}/insights", h.handleInsights)
 	mux.HandleFunc("GET /api/health", h.handleHealth)
 
-	return appErrors.WithRequestRecovery(mux)
+	return withRequestRecovery(mux)
 }
 
 type handler struct {
@@ -39,42 +41,40 @@ type handler struct {
 
 func (h *handler) handleAreas(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
-		appErrors.WriteHTTPError(w, appErrors.QueryNotAllowed)
+		writeHTTPError(w, queryNotAllowed)
 		return
 	}
-	writeJSON(w, 200, h.service.Areas())
+	writeJSON(w, http.StatusOK, presentAreas(h.service.Areas()))
 }
 
 func (h *handler) handleRecommendations(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
-		appErrors.WriteHTTPError(w, appErrors.QueryNotAllowed)
+		writeHTTPError(w, queryNotAllowed)
 		return
 	}
-	result := omitHourlyEvidence(h.service.CurrentRecommendation(h.clock()))
-	if result.Status == "unavailable" {
-		result.ErrorCode = appErrors.RecommendationUnavailable.Code
-		writeJSON(w, 503, struct {
-			recommendation.Result
-			RequestID string `json:"request_id"`
-		}{result, w.Header().Get("X-Request-ID")})
+	response := summarize(h.service.CurrentRecommendation(h.clock()))
+	if response.Status == "unavailable" {
+		response.ErrorCode = recommendationUnavailableCode
+		response.RequestID = w.Header().Get(requestIDHeader)
+		writeJSON(w, http.StatusServiceUnavailable, response)
 		return
 	}
-	writeJSON(w, 200, result)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil || id <= 0 {
-		appErrors.WriteHTTPError(w, appErrors.InvalidAreaID)
+		writeHTTPError(w, invalidAreaID)
 		return
 	}
-	if !slices.ContainsFunc(h.service.Areas(), func(area repository.Area) bool { return area.ID == id }) {
-		appErrors.WriteHTTPError(w, appErrors.AreaNotFound)
+	if !slices.ContainsFunc(h.service.Areas(), func(area domain.Area) bool { return area.ID == id }) {
+		writeHTTPError(w, areaNotFound)
 		return
 	}
 	result := h.service.CurrentRecommendation(h.clock())
 	if result.Status == "unavailable" {
-		appErrors.WriteHTTPError(w, appErrors.CurrentInsightsUnavailable)
+		writeHTTPError(w, currentInsightsUnavailable)
 		return
 	}
 	if !validateInsightVersionAndWindow(w, r, result) {
@@ -87,22 +87,22 @@ func (h *handler) handleInsights(w http.ResponseWriter, r *http.Request) {
 				"forecast_fetched_at": result.ForecastFetchedAt,
 				"generated_at":        result.GeneratedAt,
 				"valid_until":         result.ValidUntil,
-				"window":              result.Window,
+				"window":              windowResponse(result.Window),
 				"freshness":           result.Freshness,
-				"evidence":            area,
+				"evidence":            presentArea(area, true),
 				"warnings":            warningsWithForecastFreshness(result),
 			})
 			return
 		}
 	}
-	appErrors.WriteHTTPError(w, appErrors.InsightsUnavailable)
+	writeHTTPError(w, insightsUnavailable)
 }
 
 func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	result := h.service.CurrentRecommendation(h.clock())
-	status, state := 200, "ready"
+	status, state := http.StatusOK, "ready"
 	if result.Status == "unavailable" {
-		status = 503
+		status = http.StatusServiceUnavailable
 		state = "unavailable"
 	} else if result.Freshness == "stale" || result.Status == "insufficient_evidence" || result.Coverage.Assessed < result.Coverage.Total {
 		state = "degraded"
@@ -110,34 +110,31 @@ func (h *handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, map[string]any{"status": state, "recommendation_status": result.Status, "forecast_freshness": result.Freshness, "forecast_version": result.ForecastVersion})
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
 // Keeps details tied to the forecast and window the user selected.
 func validateInsightVersionAndWindow(w http.ResponseWriter, r *http.Request, result recommendation.Result) bool {
-	query := r.URL.Query()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeHTTPError(w, malformedQuery)
+		return false
+	}
 	for key := range query {
 		if key != "forecast_version" && key != "window_start" {
-			appErrors.WriteHTTPError(w, appErrors.UnknownQuery)
+			writeHTTPError(w, unknownQuery)
 			return false
 		}
 	}
 	if version := query.Get("forecast_version"); version != "" && version != result.ForecastVersion {
-		appErrors.WriteHTTPError(w, appErrors.SnapshotChanged)
+		writeHTTPError(w, snapshotChanged)
 		return false
 	}
 	if start := query.Get("window_start"); start != "" {
 		at, e := time.Parse(time.RFC3339, start)
 		if e != nil {
-			appErrors.WriteHTTPError(w, appErrors.InvalidWindowStart)
+			writeHTTPError(w, invalidWindowStart)
 			return false
 		}
 		if !at.Equal(result.Window.Start) {
-			appErrors.WriteHTTPError(w, appErrors.WindowChanged)
+			writeHTTPError(w, windowChanged)
 			return false
 		}
 	}

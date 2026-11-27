@@ -44,7 +44,21 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
     const primary = action ? result.primary_recommendation : null;
     const normal = result.status === 'no_intervention';
     const partial = result.coverage.assessed < result.coverage.total;
+    const available = result.status !== 'unavailable';
+    const fresh = available && result.freshness === 'fresh';
     const instruction = primary ? `Review driver availability in ${primary.area.name}. ` : '';
+
+    const timing = [
+        available &&
+            result.forecast_fetched_at &&
+            `Forecast retrieved: ${formatNewYorkTime(result.forecast_fetched_at)}`,
+        fresh && `Next decision update: ${formatNewYorkTime(result.window.start)}`,
+        available &&
+            (!fresh || Date.parse(result.valid_until) < Date.parse(result.window.start)) &&
+            `Decision expires: ${formatNewYorkTime(result.valid_until)}`,
+    ]
+        .filter(Boolean)
+        .join(' · ');
 
     const explanation =
         instruction && result.message.startsWith(instruction)
@@ -90,10 +104,9 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
                         <h3>Why this zone?</h3>
                         <ComparisonBars evidence={primary} />
                         <p className="muted">
-                            Highest eligible additional-trip estimate across{' '}
-                            {result.coverage.assessed} assessed zones out of {result.coverage.total}{' '}
-                            monitored. Intervention threshold:{' '}
-                            {formatNumber(result.threshold_additional_trips)} trips.
+                            Highest estimated additional trips among {result.coverage.assessed}{' '}
+                            assessed zones out of {result.coverage.total} monitored. Intervention
+                            threshold: {formatNumber(result.threshold_additional_trips)} trips.
                         </p>
                     </div>
                     <div className="before-acting">
@@ -106,14 +119,7 @@ export default function DecisionCard({ result }: { result: Recommendation }) {
                 </>
             )}
             <p className="decision-footer muted">
-                {result.forecast_fetched_at ? (
-                    <>
-                        Forecast fetched at {formatNewYorkTime(result.forecast_fetched_at, false)} ·
-                        Decision valid until {formatNewYorkTime(result.valid_until, false)}
-                    </>
-                ) : (
-                    'Waiting for a current, complete forecast and recommendation.'
-                )}
+                {timing || 'Waiting for a current, complete forecast and recommendation.'}
             </p>
         </section>
     );
@@ -134,9 +140,9 @@ function DecisionMetrics({ result }: { result: Recommendation }) {
 
     if (primary) {
         metrics = [
-            ['Expected additional trips', formatSignedNumber(primary.additional_trips)],
+            ['Estimated additional trips', formatSignedNumber(primary.additional_trips)],
             [
-                'Expected increase',
+                'Estimated increase',
                 primary.relative_uplift_percent == null
                     ? 'Not available'
                     : `${formatNumber(primary.relative_uplift_percent)}%`,
@@ -148,8 +154,8 @@ function DecisionMetrics({ result }: { result: Recommendation }) {
             ['Zones assessed', zones],
             [
                 (result.highest_modeled_additional_trips ?? 0) < 0
-                    ? 'Largest expected change'
-                    : 'Largest expected increase',
+                    ? 'Largest estimated change'
+                    : 'Highest estimated additional trips',
                 trips(result.highest_modeled_additional_trips),
             ],
             ['Intervention threshold', trips(result.threshold_additional_trips)],
@@ -157,7 +163,7 @@ function DecisionMetrics({ result }: { result: Recommendation }) {
     } else {
         metrics = [
             ['Zones assessed', zones],
-            ['Expected impact', 'Not available'],
+            ['Estimated additional trips', 'Not available'],
             ['Planning window', formatPlanningDuration(result)],
         ];
     }

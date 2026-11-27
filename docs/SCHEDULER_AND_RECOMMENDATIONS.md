@@ -28,11 +28,11 @@ flowchart LR
 |---|---|---|
 | Server | Initialize dependencies, start HTTP and the scheduler, coordinate shutdown | [cmd/server/main.go](../cmd/server/main.go) |
 | Scheduler | Decide when jobs run, apply timeouts and log failures | [scheduler.go](../internal/scheduler/scheduler.go) |
-| Weather service | Fetch, validate, persist and publish forecasts; report their current usability | [weather/service.go](../internal/weather/service.go) |
-| Historical service | Look up aggregated evidence by zone, ISO day of week and New York local hour | [history/service.go](../internal/history/service.go) |
-| Recommendation service | Join evidence, invoke scoring, publish results and validate cached reads | [recommendation/service.go](../internal/recommendation/service.go) |
-| Scoring engine | Estimate trips and select an action among assessable zones without storage or network calls | [engine.go](../internal/recommendation/engine.go) and [hour.go](../internal/recommendation/hour.go) |
-| API | Prepare summaries, return hourly evidence and expose health status | [api.go](../internal/api/api.go) |
+| Weather service | Fetch, validate, persist and publish forecasts; report their current usability | [weather/service.go](../internal/usecase/weather/service.go) |
+| Historical service | Look up aggregated evidence by zone, ISO day of week and New York local hour | [history/service.go](../internal/usecase/history/service.go) |
+| Recommendation service | Join evidence, invoke scoring, publish results and validate cached reads | [recommendation/service.go](../internal/usecase/recommendation/service.go) |
+| Scoring engine | Estimate trips and select an action among assessable zones without storage or network calls | [engine.go](../internal/domain/recommendation/engine.go) and [hour.go](../internal/domain/recommendation/hour.go) |
+| API | Prepare summaries, return hourly evidence and expose health status | [api.go](../internal/transport/httpApi/api.go) |
 
 ## Startup and ownership
 
@@ -86,16 +86,18 @@ Waiting 15 minutes at 10:53 would leave the expired result unavailable from 11:0
 
 Result expiry is the earlier of the next hour boundary or the forecast's maximum-age deadline. The API enforces expiry on every read, independently of scheduler timing.
 
+The dashboard shows forecast retrieval time and both planning-window bounds. For a fresh result, “Next decision update” marks the scheduled hourly rollover. An earlier expiry is displayed separately. The browser hides expired decisions while it waits for a replacement.
+
 ## Recommendation computation
 
-Start at `Manager.ComputeAndPublish()` in [recommendation/service.go](../internal/recommendation/service.go). `Manager` is a Go struct with methods, serving the role of a coordinator class. It owns the historical and weather dependencies, scoring options and result cache. The workflow is written as four sequential steps:
+Start at `Manager.ComputeAndPublish()` in [recommendation/service.go](../internal/usecase/recommendation/service.go). The manager owns the evidence dependencies, scoring options and result cache. It performs four steps:
 
 | Step | Call | Responsibility |
 |---|---|---|
 | 1 | `weather.CurrentForecast(now)` | Read and validate the cached forecast. |
 | 2 | `joinForecastAndHistory()` | Match forecast hours with cached historical trip statistics. |
 | 3 | `EvaluatePlanningWindow()` | Calculate hourly estimates, sum zones and select the decision. |
-| 4 | `publishRecommendation()` | Attach forecast metadata, limit expiry and publish the completed result. |
+| 4 | Result publication | Attach forecast metadata, limit expiry and publish the completed result. |
 
 An error stops the workflow before the next step. An unusable forecast publishes an unavailable result; cancellation or other computation errors retain the existing cache. Cached reads still enforce validity. Live weather fetching belongs to the scheduler's preceding weather job, not to this computation method.
 
@@ -110,9 +112,8 @@ Scheduler.tick()
            -> estimateHourTrips()
         -> chooseRecommendation()
            -> compareZones()
-     -> publishRecommendation()
-        -> attach forecast version and expiry
-        -> atomically publish the completed result
+     -> attach forecast version and expiry
+     -> atomically publish the completed result
 ```
 
 `CurrentForecast()` reads cached weather and checks its age and window coverage. A forecast snapshot contains its version, fetch time and hourly rain, snowfall and precipitation probability, normally 600 records for 20 zones over 30 hours. Forecast coverage, recommendation windows and scheduler wake-ups use the same next-hour calculation.
@@ -146,7 +147,7 @@ GET /api/recommendations
 
 A cached pointer can exist after its result becomes invalid. Every read therefore checks validity rather than assuming that a previously computed result is current. The UI also hides expired results and suppresses results from failed refreshes. Its Refresh button reads API state; it does not trigger scoring or a weather fetch.
 
-Summary responses omit hourly evidence by copying area headers. Insight responses read the same cached evidence. Optional forecast-version and window-start parameters bind insights to the displayed decision; a mismatch returns HTTP 409 and prompts the UI to refresh.
+The HTTP adapter maps cached results to summary responses without hourly evidence. Insights return the selected zone's hourly evidence from the same cached result. The frontend sends the forecast version and window start with each request, checks the returned version and both window bounds, and refreshes the recommendation on a mismatch.
 
 ## Failure behavior
 
@@ -157,7 +158,7 @@ Summary responses omit hourly evidence by copying area headers. Insight response
 | No usable weather, insufficient forecast coverage or an expired recommendation | Return unavailable with HTTP 503; do not return an old action. |
 | No zone has enough evidence | Return insufficient evidence, or unavailable if forecast evidence is missing. |
 | Some zones are assessable | Rank only complete zones, display coverage and report degraded health. |
-| No assessed zone reaches the threshold | Return no intervention for the assessed scope. |
+| No assessed zone reaches the threshold | Return no intervention with full coverage, or insufficient evidence with partial coverage. |
 
 Provider snapshots are validated and committed in full before publication to memory. Allowing partial recommendation coverage does not bypass complete-snapshot weather validation. A failed or invalid fetch does not partially replace committed weather.
 
@@ -185,4 +186,4 @@ The implementation assumes one application instance. Multiple replicas would req
 
 The separate [rain demo](../tools/rain-demo/main.go) supplies fictional inputs to the same scoring engine and API handlers. It computes on request without the scheduler, database or provider. Its API/UI ports are 8081/3001, separate from the normal 8080/3000 application. It demonstrates calculation and presentation rather than the production refresh lifecycle.
 
-Three tests cover the evidence and decision path. The SQL test checks the historical comparison, the recommendation test checks an actionable zone with partial coverage, and the weather test checks forecast reuse and expiry during an outage. [SQL evidence](../tests/historical_test.go) · [Recommendation](../tests/recommendation_test.go) · [Provider outage](../tests/weather_test.go)
+The four retained tests cover historical grouping and exact forecast round trips in PostgreSQL, an actionable recommendation with partial coverage, and bounded retries, reuse and expiry during an outage. See the [final validation results](../README.md#validation) for the broader development checks.

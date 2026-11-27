@@ -28,7 +28,7 @@ With partial coverage and no qualifying action, the decision is insufficient evi
 
 Prepared CSV files replace the original nested JSON seed. PostgreSQL's `psql` client imports them directly, removing the Go JSON reader, batching and seed-specific types. The smaller files fit in regular Git, and the API image no longer contains seed data or a seeding executable. This makes setup PostgreSQL-specific and requires the `psql` client or its Docker image. Explicit reset recreates only the assignment tables, within the import transaction, rather than dropping the database. Import failures roll back schema changes and both CSV loads.
 
-Setup succeeds on repeat runs only when the stored zones and history match the bundled CSVs, preserving live weather forecasts. It still rejects partial schemas and different seed data. Temporary CSV tables and comparisons avoid maintaining a separate seed-version marker or trusting row counts alone. The cost is reading and comparing the full dataset on each setup run. Verification blocks writes to the assignment tables briefly but permits API reads; ordinary application startup does not run setup.
+Setup skips the CSVs when both seed tables are populated and preserves saved forecasts. It rejects a partial schema or only one populated seed table. This keeps repeat setup cheap, with the trade-off that it cannot detect arbitrary edits inside a populated dataset. Obsolete development schemas require an explicit reset and reseed, which removes saved forecasts along with the other assignment data.
 
 | Decision | Reason | Accepted limitation |
 |---|---|---|
@@ -49,7 +49,7 @@ The controller view shows one primary action, coverage, supporting hourly eviden
 
 Trip quantities are rounded only when serialized to JSON. Scoring and ranking retain full precision, missing values remain null, and percentages and weather measurements retain decimals. Hourly estimates and window totals are rounded independently, so displayed values may not add up exactly.
 
-The three retained tests cover historical SQL grouping, a partial-coverage recommendation and forecast-provider failure. This keeps the suite small enough to review in one sitting. Negative uplift, unsupported snow and partial coverage without an action have less regression coverage after removing the larger scenario matrix.
+The retained tests cover historical SQL grouping, the rainfall precision boundary, partial-coverage recommendations and provider failure. Separate development checks covered daylight-saving transitions, Docker setup and browser interactions. These checks establish application behavior. Predictive accuracy, causal rain effects and the operational impact of acting on a recommendation remain unmeasured.
 
 The separate rain demo uses explicitly fictional inputs and the actual scoring engine. It demonstrates calculation and presentation, not live forecast accuracy or the production refresh lifecycle. Authentication, supply-demand integration, additional weather models and outcome evaluation are outside the implemented scope.
 

@@ -4,42 +4,42 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"mobilitycontrolroom/database/migrations"
-	"mobilitycontrolroom/internal/history"
-	"mobilitycontrolroom/internal/repository"
-	"mobilitycontrolroom/internal/repository/postgres"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"mobilitycontrolroom/database/migrations"
+	"mobilitycontrolroom/internal/domain"
+	"mobilitycontrolroom/internal/repository/postgres"
+	"mobilitycontrolroom/internal/usecase/history"
 )
 
-func TestHistoricalRainAndDryEvidence(t *testing.T) {
+func openTestDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("set TEST_DATABASE_URL for the PostgreSQL business-evidence test")
+		t.Skip("set TEST_DATABASE_URL for the PostgreSQL integration tests")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
+	t.Cleanup(admin.Close)
 	schema := fmt.Sprintf("business_evidence_%d", time.Now().UnixNano())
 	quoted := pgx.Identifier{schema}.Sanitize()
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if _, err := admin.Exec(cleanup, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
 			t.Error(err)
 		}
-	}()
+	})
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -49,11 +49,18 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	if _, err := pool.Exec(ctx, migrations.Up); err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO community_areas VALUES(7,'Astoria',40.7615,-73.9239);
+	return pool
+}
+
+func TestHistoricalRainAndDryEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	pool := openTestDB(t, ctx)
+	_, err := pool.Exec(ctx, `INSERT INTO community_areas VALUES(7,'Astoria',40.7615,-73.9239);
 		INSERT INTO historical_observations(area_id,hour_start,local_date,day_of_week,hour_of_day,trip_count,rain_mm,snowfall_cm) VALUES
 		(7,'2022-12-03 15:00Z','2022-12-03',6,10,1100,0,0),
 		(7,'2023-04-08 14:00Z','2023-04-08',6,10,1300,0,0),
@@ -72,7 +79,7 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := postgres.New(pool)
-	evidence, err := history.Load(ctx, adapter, adapter, repository.HistoricalQuery{MinRainfallMM: 0.5}, loc)
+	evidence, err := history.Load(ctx, adapter, adapter, 0.5, loc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +106,7 @@ func TestHistoricalRainAndDryEvidence(t *testing.T) {
 	}
 }
 
-func assertHistoricalComparison(t *testing.T, stats repository.HourlyStats) {
+func assertHistoricalComparison(t *testing.T, stats domain.HourlyStats) {
 	t.Helper()
 	if stats.DrySamples != 4 || stats.RainSamples != 2 {
 		t.Fatalf("baseline must include light rain; qualifying rain stays separate and snow excluded: %+v", stats)

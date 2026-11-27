@@ -23,13 +23,27 @@ export function formatSignedNumber(value: number | null | undefined) {
     return value == null ? 'Not available' : `${value > 0 ? '+' : ''}${formatNumber(value)}`;
 }
 
+const newYorkTime = {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+} as const;
+
+const timeFormatter = new Intl.DateTimeFormat('en-US', newYorkTime);
+
+const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+    ...newYorkTime,
+    month: 'short',
+    day: 'numeric',
+});
+
 export function formatNewYorkTime(value: string, includeDate = true) {
-    return new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/New_York',
-        ...(includeDate ? ({ month: 'short', day: 'numeric' } as const) : {}),
-        hour: 'numeric',
-        minute: '2-digit',
-    }).format(new Date(value));
+    return (includeDate ? dateTimeFormatter : timeFormatter).format(new Date(value));
+}
+
+export function formatPlanningWindow({ start, end }: Recommendation['window']) {
+    return `${formatNewYorkTime(start)} – ${formatNewYorkTime(end)}`;
 }
 
 export function formatPlanningDuration(result: Recommendation) {

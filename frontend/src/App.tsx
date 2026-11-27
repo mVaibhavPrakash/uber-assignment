@@ -4,7 +4,7 @@ import EvidencePanel from './components/EvidencePanel';
 import ZoneImpactRanking from './components/ZoneImpactRanking';
 import Uncertainty from './components/Uncertainty';
 import { useInsights, useRecommendation } from './state/hooks';
-import { formatAreaName, formatNewYorkTime, rankAssessedZones } from './utils/presentation';
+import { formatAreaName, formatPlanningWindow, rankAssessedZones } from './utils/presentation';
 
 export default function App() {
     const { result, loading, error, expired, refresh } = useRecommendation();
@@ -50,10 +50,10 @@ export default function App() {
                 This decision concerns weather-related trip activity, not the overall health of
                 marketplace operations.
             </p>
-            {result && (
+            {usable && (
                 <p className="planning-window">
-                    <span aria-hidden="true">◷</span> {formatNewYorkTime(result.window.start)} –{' '}
-                    {formatNewYorkTime(result.window.end)} · New York
+                    <span aria-hidden="true">◷</span> Planning window:{' '}
+                    {formatPlanningWindow(result.window)}
                 </p>
             )}
             {error && (

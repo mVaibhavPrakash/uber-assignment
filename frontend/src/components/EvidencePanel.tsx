@@ -4,7 +4,7 @@ import {
     formatAreaName,
     describeHourAssessment,
     formatNewYorkTime,
-    formatPlanningDuration,
+    formatPlanningWindow,
     formatNumber,
 } from '../utils/presentation';
 import type { AreaEvidence, Recommendation } from '../types/recommendation';
@@ -19,7 +19,8 @@ export default function EvidencePanel({
     return (
         <>
             <div className="evidence-card">
-                <h3>Expected trips over the next {formatPlanningDuration(result)}</h3>
+                <h3>Expected trips during the planning window</h3>
+                <p className="muted">Planning window: {formatPlanningWindow(result.window)}</p>
                 <ComparisonBars evidence={evidence} />
             </div>
 
@@ -43,7 +44,7 @@ export default function EvidencePanel({
                             <th scope="col">Time</th>
                             <th scope="col">Rain forecast</th>
                             <th scope="col">Historical averages</th>
-                            <th scope="col">Extra trips</th>
+                            <th scope="col">Estimated additional trips</th>
                             <th scope="col">Evidence</th>
                         </tr>
                     </thead>

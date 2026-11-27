@@ -2,15 +2,16 @@
 package recommendation
 
 import (
+	"cmp"
+	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
-	"mobilitycontrolroom/internal/appErrors"
 	"mobilitycontrolroom/internal/domain"
 )
 
-// It starts at the next full UTC hour, even when now is exactly on the hour.
+// NextFullHourWindow starts at the next full UTC hour, even when now is exactly on the hour.
 func NextFullHourWindow(now time.Time, duration time.Duration) Window {
 	start := domain.NextFullHour(now)
 	return Window{start, start.Add(duration), int64(duration / time.Second)}
@@ -28,10 +29,12 @@ func recommendationLimitations() []string {
 	}
 }
 
-// Evaluates each zone and ranks those with complete planning-window evidence.
+// EvaluatePlanningWindow evaluates each zone and ranks those with complete planning-window evidence.
 // It has no storage, network or cache side effects.
-func EvaluatePlanningWindow(now time.Time, options Options, inputs []AreaInput) (Result, error) {
-	// 1. Validate settings and prepare the planning window.
+func EvaluatePlanningWindow(ctx context.Context, now time.Time, options Options, inputs []AreaInput) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if err := options.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -43,20 +46,20 @@ func EvaluatePlanningWindow(now time.Time, options Options, inputs []AreaInput) 
 		return result, nil
 	}
 
-	// 2. Estimate every hour and sum the evidence for each zone.
 	seen := make(map[int]bool)
 	for _, input := range inputs {
 		if input.Area.ID <= 0 || seen[input.Area.ID] {
 			return Result{}, fmt.Errorf("invalid or duplicate recommendation area")
 		}
 		seen[input.Area.ID] = true
-		result.Areas = append(result.Areas, estimateAreaWindow(input, result.Window, options))
+		area, err := estimateAreaWindow(ctx, input, result.Window, options)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Areas = append(result.Areas, area)
 	}
 
-	// 3. Sort for consistent output, then choose an action among assessable zones.
-	sort.Slice(result.Areas, func(i, j int) bool {
-		return result.Areas[i].Area.ID < result.Areas[j].Area.ID
-	})
+	slices.SortFunc(result.Areas, func(a, b AreaEvidence) int { return cmp.Compare(a.Area.ID, b.Area.ID) })
 	chooseRecommendation(&result)
 	return result, nil
 }
@@ -80,7 +83,7 @@ func newPlanningWindowResult(now time.Time, options Options, areaCount int) Resu
 }
 
 // Rain impact and trip volume can have different coverage within the same zone.
-func estimateAreaWindow(input AreaInput, window Window, options Options) AreaEvidence {
+func estimateAreaWindow(ctx context.Context, input AreaInput, window Window, options Options) (AreaEvidence, error) {
 	area := AreaEvidence{
 		Area: input.Area, Reasons: []string{},
 		Hourly: make([]HourEvidence, 0, int(options.Window/time.Hour)),
@@ -89,6 +92,9 @@ func estimateAreaWindow(input AreaInput, window Window, options Options) AreaEvi
 	hasFullBaseline := true
 
 	for index := range int(options.Window / time.Hour) {
+		if err := ctx.Err(); err != nil {
+			return AreaEvidence{}, err
+		}
 		at := window.Start.Add(time.Duration(index) * time.Hour)
 		var hour HourInput
 		if index < len(input.Hours) {
@@ -113,7 +119,7 @@ func estimateAreaWindow(input AreaInput, window Window, options Options) AreaEvi
 
 	area.Assessable = len(area.Reasons) == 0
 	if !area.Assessable {
-		return area
+		return area, nil
 	}
 	area.Additional = &additional
 	if hasFullBaseline {
@@ -124,7 +130,7 @@ func estimateAreaWindow(input AreaInput, window Window, options Options) AreaEvi
 		}
 	}
 
-	return area
+	return area, nil
 }
 
 type zoneComparison struct {
@@ -166,8 +172,7 @@ func chooseRecommendation(result *Result) {
 	if !zones.hasForecast {
 		result.Status = "unavailable"
 		result.DecisionReason = ReasonForecastUnavailable
-		result.Message = appErrors.ForecastUnavailable.Message
-		result.ErrorCode = appErrors.ForecastUnavailable.Code
+		result.Message = "Complete forecast coverage is unavailable."
 		return
 	}
 	winner := zones.highestImpact
@@ -195,4 +200,16 @@ func chooseRecommendation(result *Result) {
 		result.DecisionReason = ReasonBelowThreshold
 		result.Message = fmt.Sprintf("Rain at or above %g mm/hour is forecast, but no zone reaches the intervention threshold of %g additional completed trips over this planning window.", result.RainfallThresholdMM, result.Threshold)
 	}
+}
+
+// UnavailableResult describes the current window when usable evidence is missing.
+func UnavailableResult(now time.Time, options Options, areaCount int, version string) Result {
+	result := newPlanningWindowResult(now, options, areaCount)
+	result.Status = "unavailable"
+	result.DecisionReason = ReasonRecommendationUnavailable
+	result.Message = "A current, complete forecast and recommendation are not available."
+	result.Freshness = "unavailable"
+	result.ValidUntil = now.UTC()
+	result.ForecastVersion = version
+	return result
 }

@@ -3,9 +3,10 @@ package tests
 import (
 	"testing"
 	"time"
+	_ "time/tzdata"
 
-	"mobilitycontrolroom/internal/recommendation"
-	"mobilitycontrolroom/internal/repository"
+	"mobilitycontrolroom/internal/domain"
+	"mobilitycontrolroom/internal/domain/recommendation"
 )
 
 func TestRecommendationSelectsAnActionableZoneWithPartialCoverage(t *testing.T) {
@@ -24,24 +25,24 @@ func TestRecommendationSelectsAnActionableZoneWithPartialCoverage(t *testing.T) 
 	zone := func(id int, rainyMean float64, rainySamples int64) recommendation.AreaInput {
 		dryMean := 1200.0
 		return recommendation.AreaInput{
-			Area: repository.Area{ID: id},
+			Area: domain.Area{ID: id},
 			Hours: []recommendation.HourInput{
 				{
 					At: noon,
-					Forecast: &repository.ForecastHour{
+					Forecast: &domain.ForecastHour{
 						AreaID: id, HourStart: noon, RainMM: 0.5, PrecipitationProbability: 90,
 					},
-					History: &repository.HourlyStats{
+					History: &domain.HourlyStats{
 						AreaID: id, DayOfWeek: 3, HourOfDay: 12,
 						DryMean: &dryMean, RainMean: &rainyMean, DrySamples: 5, RainSamples: rainySamples,
 					},
 				},
-				{At: onePM, Forecast: &repository.ForecastHour{AreaID: id, HourStart: onePM, RainMM: 0}},
+				{At: onePM, Forecast: &domain.ForecastHour{AreaID: id, HourStart: onePM, RainMM: 0}},
 			},
 		}
 	}
 	// Zone 8 has a larger observed increase, but only four rainy samples.
-	result, err := recommendation.EvaluatePlanningWindow(now, options, []recommendation.AreaInput{
+	result, err := recommendation.EvaluatePlanningWindow(t.Context(), now, options, []recommendation.AreaInput{
 		zone(7, 1700, 5), zone(8, 2400, 4),
 	})
 	if err != nil {

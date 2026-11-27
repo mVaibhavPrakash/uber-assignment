@@ -2,16 +2,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
 	"time"
 	_ "time/tzdata"
 
-	"mobilitycontrolroom/internal/api"
 	"mobilitycontrolroom/internal/domain"
-	"mobilitycontrolroom/internal/recommendation"
-	"mobilitycontrolroom/internal/repository"
+	"mobilitycontrolroom/internal/domain/recommendation"
+	"mobilitycontrolroom/internal/transport/httpApi"
 )
 
 func main() {
@@ -25,15 +25,15 @@ func main() {
 		Window: 2 * time.Hour, MinSamples: 5, RainThreshold: 0.5,
 		AdditionalPerHour: 50, Location: location,
 	}}
-	server := &http.Server{Addr: *address, Handler: api.Handler(service, time.Now), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: *address, Handler: httpApi.Handler(service, time.Now), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("FICTIONAL SAMPLE DATA: rain scenario API at http://%s; no database or weather provider is used", *address)
 	log.Fatal(server.ListenAndServe())
 }
 
 type rainScenario struct{ options recommendation.Options }
 
-func (rainScenario) Areas() []repository.Area {
-	return []repository.Area{{ID: 7, Name: "Astoria (fictional sample data)"}}
+func (rainScenario) Areas() []domain.Area {
+	return []domain.Area{{ID: 7, Name: "Astoria (fictional sample data)"}}
 }
 
 func (s rainScenario) CurrentRecommendation(now time.Time) recommendation.Result {
@@ -48,14 +48,14 @@ func (s rainScenario) CurrentRecommendation(now time.Time) recommendation.Result
 		}
 		input.Hours = append(input.Hours, recommendation.HourInput{
 			At:       at,
-			Forecast: &repository.ForecastHour{AreaID: 7, HourStart: at, RainMM: rainMM, PrecipitationProbability: 90},
-			History: &repository.HourlyStats{
+			Forecast: &domain.ForecastHour{AreaID: 7, HourStart: at, RainMM: rainMM, PrecipitationProbability: 90},
+			History: &domain.HourlyStats{
 				AreaID: 7, DayOfWeek: day, HourOfDay: hour,
 				DryMean: &dry, RainMean: &rain, DrySamples: 5, RainSamples: 5,
 			},
 		})
 	}
-	result, err := recommendation.EvaluatePlanningWindow(now, s.options, []recommendation.AreaInput{input})
+	result, err := recommendation.EvaluatePlanningWindow(context.Background(), now, s.options, []recommendation.AreaInput{input})
 	if err != nil {
 		panic(err) // Fixed sample options must remain valid; the API recovers safely.
 	}
