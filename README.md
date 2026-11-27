@@ -10,7 +10,12 @@ A marketplace operator needs to know where to check driver availability when rai
 
 The labeled fictional demo recommends **checking driver availability in Astoria**. It estimates **450 additional completed trips** against a **100-trip threshold**. In a [dry forecast from the live API](docs/normal-operations.png), the dashboard shows no rain-related action and still presents the supporting evidence.
 
-To run the fictional scenario, start `go run ./tools/rain-demo` at the repo root and `npm run dev:sample` from `frontend`, then open [the demo](http://localhost:3001). The demo uses the same scorer and needs Go 1.25+, Node.js 22, and frontend dependencies installed with `npm ci`.
+The demo uses the same scorer and needs Go 1.25+, Node.js 22, and frontend dependencies installed with `npm ci`.
+
+1. From the repo root, run `go run ./tools/rain-demo`. This starts the fictional API on port **8081**.
+2. In a second terminal, run `npm run dev:sample` from `frontend`. Open **[http://localhost:3001](http://localhost:3001)** to see the fictional Astoria recommendation.
+
+Port **3000** is the live dashboard. Starting the rain demo leaves it connected to the live API. If the live decision reports assessed zones but the ranking says none could be assessed, check for an older backend that omits `additional_trips_exact`. Rebuild or restart the live API from the current checkout.
 
 <a name="run"></a>
 
