@@ -4,9 +4,11 @@ I built the project as an explainable decision-support prototype: compare histor
 
 ## AI use disclosure
 
-I led the implementation, supplied the project code, requirements and design direction, and decided which suggestions to retain, simplify or reject. ChatGPT supported design discussions and challenged assumptions. OpenAI Codex assisted with code revisions, refactoring, SQL, error handling, tests, Docker troubleshooting and documentation. AI was not the sole author of the project.
+I built the initial implementation, prepared the bundled NYC dataset, and did the first code review and test runs. I made the product and technical decisions, including what the recommendation should tell an operator and what evidence it needed.
 
-Accepted refinements included separating storage from scoring, expressing the historical comparison in SQL, distinguishing no intervention from insufficient evidence and unavailability, and checking forecast version and expiry on each cached read. I reviewed generated changes against the running application and revised outputs that added unnecessary complexity or overstated what the data could support.
+I used ChatGPT as a sounding board for design options. After my initial review, I used OpenAI Codex to double-check behavior, suggest changes, and run additional verification. I implemented some suggestions myself and asked Codex to implement others, including selected refactors and regression checks. I reviewed the changes against the running application and decided which to accept, revise, or drop.
+
+For example, I kept weekday and local hour as the historical comparison because weekly travel patterns matter. I also chose to remove full CSV comparisons from repeat setup. The setup script only needed to seed an empty database and preserve existing data.
 
 Important corrections included the initial all-zone eligibility rule, the rejection of valid light rain, excessive test scenarios, and scheduler mutexes that protected no actual concurrent access. Earlier documentation also retained outdated Chicago and synthetic-data assumptions; those were corrected to reflect the submitted NYC dataset.
 
